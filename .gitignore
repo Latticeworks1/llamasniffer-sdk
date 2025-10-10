@@ -70,6 +70,8 @@ secrets.json
 .secrets
 *.key
 api_key.txt
+.env.*
+secrets.txt
 
 # Logs
 *.log

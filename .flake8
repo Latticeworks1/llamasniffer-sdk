@@ -1,0 +1,33 @@
+[flake8]
+max-line-length = 100
+extend-ignore = E203, W503
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    venv
+
+# Custom rules
+select = E,W,F,C
+per-file-ignores =
+    __init__.py:F401
+
+# Additional strictness
+max-complexity = 10
+max-doc-length = 100
+
+# No emojis allowed in code
+# This will catch common emoji unicode ranges
+ignore-decorators = @property,@classmethod,@staticmethod
+
+# Ban specific patterns (emojis)
+# We'll use a simple pattern that catches common emoji ranges
+# U+1F600-U+1F64F (emoticons)
+# U+1F300-U+1F5FF (misc symbols)
+# U+1F680-U+1F6FF (transport)
+# U+2600-U+26FF (misc symbols)
+# U+2700-U+27BF (dingbats)
+banned-patterns = 
+    [\U0001F600-\U0001F64F]|[\U0001F300-\U0001F5FF]|[\U0001F680-\U0001F6FF]|[\u2600-\u26FF]|[\u2700-\u27BF]

@@ -3,24 +3,30 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "llamasniffer-sdk"
-version = "0.1.0"
-description = "SDK for discovering and interacting with Ollama instances on local networks"
-readme = "README_SDK.md"
-license = {text = "MIT"}
+name = "llamasniffer"
+version = "0.2.0"
+description = "SDK for discovering and interacting with Ollama instances with distributed inference and semantic model matching"
+readme = "README.md"
+license = {file = "LICENSE"}
 authors = [
     {name = "Latticeworks1", email = "dev@latticeworks1.com"},
 ]
+keywords = ["ollama", "llm", "ai", "distributed-inference", "model-discovery", "semantic-matching"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
 ]
 requires-python = ">=3.8"
 dependencies = [
@@ -28,12 +34,13 @@ dependencies = [
     "shodan>=1.31.0",
     "datasets>=2.14.0",
     "huggingface-hub>=0.17.0",
+    "numpy>=1.21.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/Latticeworks1/llamasniffer-sdk"
-Repository = "https://github.com/Latticeworks1/llamasniffer-sdk"
-Issues = "https://github.com/Latticeworks1/llamasniffer-sdk/issues"
+Homepage = "https://github.com/Latticeworks1/llamasniffer"
+Repository = "https://github.com/Latticeworks1/llamasniffer"
+Issues = "https://github.com/Latticeworks1/llamasniffer/issues"
 
 [tool.uv]
 dev-dependencies = [
@@ -44,5 +51,47 @@ dev-dependencies = [
     "mypy>=1.0.0",
 ]
 
+[project.optional-dependencies]
+semantic = [
+    "sentence-transformers>=2.2.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0", 
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+    "build>=0.10.0",
+    "twine>=4.0.0",
+]
+
+[project.scripts]
+llamasniffer = "llamasniffer.core:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["llamasniffer_sdk"]
+packages = ["llamasniffer"]
+
+[tool.hatch.version]
+path = "llamasniffer/_version.py"
+
+[tool.black]
+line-length = 100
+target-version = ['py38']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=llamasniffer --cov-report=html --cov-report=term-missing"
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+select = ["E", "W", "F", "C"]
+max-complexity = 10
+per-file-ignores = "__init__.py:F401"

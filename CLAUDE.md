@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LlamaSniffer SDK is a Python library for discovering and interacting with Ollama LLM instances across local networks and globally via Shodan. The project enables automated discovery, verification, and interaction with distributed Ollama services.
+LlamaSniffer is a Python library for discovering and interacting with Ollama LLM instances across local networks and globally via Shodan. The project enables automated discovery, verification, and interaction with distributed Ollama services.
 
 ## Architecture
 
@@ -39,15 +39,15 @@ pip install shodan datasets huggingface-hub requests
 ### Testing
 ```bash
 # Test local discovery
-python3 -c "import llamasniffer_sdk; print(llamasniffer_sdk.discover_ollama_instances())"
+python3 -c "import llamasniffer; print(llamasniffer.discover_ollama_instances())"
 
 # Test Shodan discovery
-python3 -c "import llamasniffer_sdk; print(llamasniffer_sdk.discover_ollama_shodan(query='ollama', limit=5))"
+python3 -c "import llamasniffer; print(llamasniffer.discover_ollama_shodan(query='ollama', limit=5))"
 
 # Test client interaction
 python3 -c "
-import llamasniffer_sdk
-client = llamasniffer_sdk.connect_to_ollama('127.0.0.1', 11434)
+import llamasniffer
+client = llamasniffer.connect_to_ollama('127.0.0.1', 11434)
 print(client.list_models())
 "
 ```
@@ -117,3 +117,11 @@ pip install -e .
 - Use descriptive docstrings with Args/Returns sections
 - Follow type hints throughout codebase
 - Graceful error handling without exposed internals
+
+## Naming Conventions
+
+- Never name things "enhanced" or "advanced" (misspellings or overly generic terms)
+
+## Warnings and Restrictions
+
+- Dont use local discover
