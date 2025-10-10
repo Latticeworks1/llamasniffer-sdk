@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llamasniffer-sdk"
+version = "0.1.0"
+description = "SDK for discovering and interacting with Ollama instances on local networks"
+readme = "README_SDK.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Latticeworks1", email = "dev@latticeworks1.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.31.0",
+    "shodan>=1.31.0",
+    "datasets>=2.14.0",
+    "huggingface-hub>=0.17.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Latticeworks1/llamasniffer-sdk"
+Repository = "https://github.com/Latticeworks1/llamasniffer-sdk"
+Issues = "https://github.com/Latticeworks1/llamasniffer-sdk/issues"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["llamasniffer_sdk"]
