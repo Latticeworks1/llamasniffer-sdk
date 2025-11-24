@@ -1,11 +1,10 @@
 """
-LlamaSniffer - Discover and interact with Ollama instances locally and globally.
+LlamaSniffer - Discover and interact with remote Ollama instances globally.
 
-Provides comprehensive discovery mechanisms for Ollama LLM instances across
-local networks and internet-facing services via Shodan integration.
+Provides remote discovery for Ollama LLM instances via Shodan integration.
+Remote-only architecture - no local network scanning.
 """
 
-import socket
 import threading
 import requests
 import json
@@ -18,20 +17,21 @@ from datasets import Dataset
 from huggingface_hub import HfApi, create_repo
 
 
-class OllamaDiscovery:
-    """Discovers Ollama instances across networks using multiple discovery methods.
+class RemoteDiscovery:
+    """Discovers remote Ollama instances globally via Shodan API.
 
-    Supports both local network scanning and global discovery via Shodan API.
-    Provides verification and metadata collection for discovered instances.
+    Remote-only architecture - discovers internet-facing Ollama instances
+    on any port worldwide. No local network scanning.
 
     Args:
-        timeout: Connection timeout for network operations in seconds
-        shodan_api_key: Optional Shodan API key for global discovery
+        timeout: Connection timeout for verification requests in seconds
+        shodan_api_key: Shodan API key for global discovery
+        hf_token: Optional Hugging Face token for dataset backups
     """
 
     def __init__(
         self,
-        timeout: float = 2.0,
+        timeout: float = 5.0,
         shodan_api_key: Optional[str] = None,
         hf_token: Optional[str] = None,
     ):
@@ -41,37 +41,6 @@ class OllamaDiscovery:
         self.shodan_client = shodan.Shodan(shodan_api_key) if shodan_api_key else None
         self.hf_token = hf_token
         self.hf_api = HfApi(token=hf_token) if hf_token else None
-
-    def scan_port_range(
-        self, host: str, start_port: int = 11434, end_port: int = 11450
-    ) -> List[int]:
-        """Scan port range on target host for active Ollama services.
-
-        Args:
-            host: Target IP address or hostname
-            start_port: Beginning of port range to scan
-            end_port: End of port range to scan
-
-        Returns:
-            List of ports running verified Ollama instances
-        """
-        open_ports = []
-
-        for port in range(start_port, end_port + 1):
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self.timeout)
-            try:
-                result = sock.connect_ex((host, port))
-                if result == 0:
-                    verification = self._verify_ollama_instance(host, port)
-                    if verification.get("verified", False):
-                        open_ports.append(port)
-            except Exception:
-                pass
-            finally:
-                sock.close()
-
-        return open_ports
 
     def _verify_ollama_instance(self, host: str, port: int) -> Dict[str, any]:
         """Fast Ollama instance verification with response time measurement.
@@ -132,50 +101,7 @@ class OllamaDiscovery:
         except Exception as e:
             return {}
 
-    def scan_network(self, network_prefix: str = "192.168.1") -> List[Dict[str, any]]:
-        """Perform threaded network scan across IP range for Ollama instances.
-
-        Args:
-            network_prefix: Network prefix (e.g., "192.168.1") for subnet scanning
-
-        Returns:
-            List of discovered instances with metadata
-        """
-        instances = []
-        threads = []
-        lock = threading.Lock()
-
-        def scan_host(host_ip: str):
-            ports = self.scan_port_range(host_ip)
-            if ports:
-                with lock:
-                    for port in ports:
-                        # Get full verification data for discovered instances
-                        verification = self._verify_ollama_instance(host_ip, port)
-                        if verification.get("verified", False):
-                            instance = {
-                                "host": host_ip,
-                                "port": port,
-                                "url": f"http://{host_ip}:{port}",
-                                "discovered_at": time.time(),
-                                "discovery_method": "local_scan",
-                                **verification,  # Include all verification metadata
-                            }
-                            instances.append(instance)
-
-        for i in range(1, 255):
-            host_ip = f"{network_prefix}.{i}"
-            thread = threading.Thread(target=scan_host, args=(host_ip,))
-            threads.append(thread)
-            thread.start()
-
-        for thread in threads:
-            thread.join()
-
-        self.discovered_instances = instances
-        return instances
-
-    def scan_shodan(self, query: str = "ollama", limit: int = 100) -> List[Dict[str, any]]:
+    def search(self, query: str = "ollama", limit: int = 100) -> List[Dict[str, any]]:
         """Discover internet-facing Ollama instances via Shodan search.
 
         Uses conservative credit consumption with single targeted query.
@@ -621,16 +547,43 @@ class DistributedOllamaManager:
                 "average_response_time": instance.get("version_response_time_ms", 1000),
                 "current_load": 0,
                 "models": instance.get("models", []),
-                "last_health_check": time.time(),
+                "last_health_check": instance.get("last_health_check") or 0,
             }
 
     def _get_available_instances_for_model(self, model: str) -> List[str]:
         """Get instances that have the specified model available."""
-        available = []
+        available: List[str] = []
+        unknown: List[str] = []
+
         for instance_key, stats in self.instance_stats.items():
-            if instance_key not in self.failed_instances and model in stats["models"]:
-                available.append(instance_key)
-        return available
+            if instance_key in self.failed_instances:
+                continue
+
+            models = stats.get("models", [])
+
+            if models:
+                if model in models:
+                    available.append(instance_key)
+                continue
+
+            # No cached model info – attempt a health check to refresh inventory
+            last_check = stats.get("last_health_check", 0)
+            if not last_check or (time.time() - last_check) >= max(self.timeout / 2, 1):
+                if self._health_check_instance(instance_key):
+                    models = self.instance_stats[instance_key].get("models", [])
+                    if models and model in models:
+                        available.append(instance_key)
+                        continue
+                    if models:
+                        # Model inventory refreshed but desired model absent
+                        continue
+
+            # Still no information about available models; treat as unknown capability
+            unknown.append(instance_key)
+
+        # If we couldn't confirm any compatible nodes but have unknown-capability nodes,
+        # surface them so the caller can attempt execution rather than failing fast.
+        return available if available else unknown
 
     def _select_optimal_instance(self, available_instances: List[str]) -> Optional[str]:
         """Select the optimal instance based on the configured strategy."""
@@ -665,20 +618,27 @@ class DistributedOllamaManager:
 
     def _health_check_instance(self, instance_key: str) -> bool:
         """Perform health check on a specific instance."""
-        try:
-            host, port = instance_key.split(":")
-            client = self.clients[instance_key]
+        client = self.clients.get(instance_key)
+        if not client:
+            return False
 
+        try:
             start_time = time.time()
             models = client.list_models()
             response_time = (time.time() - start_time) * 1000
 
-            if models:
-                self.instance_stats[instance_key]["models"] = models
-                self.instance_stats[instance_key]["last_health_check"] = time.time()
-                if instance_key in self.failed_instances:
-                    self.failed_instances.remove(instance_key)
-                return True
+            if models is None:
+                models = []
+
+            stats = self.instance_stats.get(instance_key)
+            if stats is not None:
+                stats["models"] = models
+                stats["last_health_check"] = time.time()
+                current_avg = stats.get("average_response_time", response_time)
+                stats["average_response_time"] = (current_avg * 0.8) + (response_time * 0.2)
+
+            self.failed_instances.discard(instance_key)
+            return True
 
         except Exception:
             pass
@@ -816,7 +776,7 @@ class DistributedOllamaManager:
                 best_result = min(
                     successful_results,
                     key=lambda x: x.get("execution_metadata", {}).get(
-                        "response_time_ms", float("in")
+                        "response_time_ms", float("inf")
                     ),
                 )
                 best_result["parallel_results"] = results
@@ -869,34 +829,7 @@ class DistributedOllamaManager:
             },
         }
 
-    def _health_check_instance(self, instance_key: str) -> bool:
-        """Perform health check on a specific instance."""
-        try:
-            client = self.clients.get(instance_key)
-            if not client:
-                return False
-            
-            # Try to list models as health check
-            models = client.list_models()
-            if models:
-                # Update instance stats with current models
-                self.instance_stats[instance_key]["models"] = models
-                self.instance_stats[instance_key]["last_health_check"] = time.time()
-                return True
-        except Exception:
-            pass
-        return False
-
-
-def discover_ollama_instances(
-    network_prefix: str = "192.168.1", timeout: float = 2.0
-) -> List[Dict[str, any]]:
-    """Convenience function to discover Ollama instances on the local network"""
-    discovery = OllamaDiscovery(timeout=timeout)
-    return discovery.scan_network(network_prefix)
-
-
-def discover_ollama_shodan(
+def discover_remote_instances(
     shodan_api_key: str, query: str = "ollama", limit: int = 100
 ) -> List[Dict[str, any]]:
     """Discover Ollama instances globally via Shodan with comprehensive verification.
@@ -913,8 +846,8 @@ def discover_ollama_shodan(
     Returns:
         List of verified instances with comprehensive metadata
     """
-    discovery = OllamaDiscovery(shodan_api_key=shodan_api_key)
-    return discovery.scan_shodan(query, limit)
+    discovery = RemoteDiscovery(shodan_api_key=shodan_api_key)
+    return discovery.search(query, limit)
 
 
 def connect_to_ollama(host: str, port: int = 11434) -> OllamaClient:
@@ -923,29 +856,22 @@ def connect_to_ollama(host: str, port: int = 11434) -> OllamaClient:
 
 
 def create_distributed_manager(
-    instances: List[Dict[str, any]] = None, strategy: str = "fastest", auto_discover: bool = True
+    instances: List[Dict[str, any]], strategy: str = "fastest"
 ) -> DistributedOllamaManager:
-    """Create a distributed Ollama manager with automatic discovery.
+    """Create a distributed Ollama manager for remote instances.
 
     Args:
-        instances: Pre-discovered instances (optional)
+        instances: List of remote instances (required)
         strategy: Load balancing strategy ('fastest', 'round_robin', 'least_loaded')
-        auto_discover: Automatically discover local instances if none provided
 
     Returns:
         Configured DistributedOllamaManager ready for inference
     """
-    if instances is None and auto_discover:
-        print("Auto-discovering local Ollama instances...")
-        instances = discover_ollama_instances()
-        if not instances:
-            print("No local instances found. Try Shodan discovery or provide instances manually.")
-
     if not instances:
-        raise ValueError("No Ollama instances available. Discovery failed or none provided.")
+        raise ValueError("No Ollama instances provided. Use discover_remote_instances() to find instances.")
 
     print(
-        f"Initializing distributed manager with {len(instances)} instances using '{strategy}' strategy"
+        f"Initializing distributed manager with {len(instances)} remote instances using '{strategy}' strategy"
     )
     return DistributedOllamaManager(instances, strategy=strategy)
 
@@ -957,56 +883,41 @@ def main():
     from ._version import __version__
 
     parser = argparse.ArgumentParser(
-        description="LlamaSniffer - Discover and interact with Ollama instances."
+        description="LlamaSniffer - Discover remote Ollama instances globally."
     )
     parser.add_argument(
-        "--scan-local", action="store_true", help="Scan the local network for Ollama instances."
+        "--discover", action="store_true", help="Discover remote Ollama instances via Shodan."
     )
     parser.add_argument(
-        "--scan-shodan", action="store_true", help="Scan Shodan for Ollama instances."
+        "--test-semantic", action="store_true", help="Test semantic model matching."
     )
+    parser.add_argument("--query", type=str, default="ollama", help="Shodan search query.")
+    parser.add_argument("--limit", type=int, default=10, help="Limit for Shodan results (default: 10).")
     parser.add_argument(
-        "--scan-semantic", action="store_true", help="Test semantic model matching."
-    )
-    parser.add_argument("--shodan-query", type=str, default="ollama", help="Shodan query to use.")
-    parser.add_argument("--shodan-limit", type=int, default=100, help="Limit for Shodan results.")
-    parser.add_argument(
-        "--network-prefix", type=str, default="192.168.1", help="Network prefix for local scan."
-    )
-    parser.add_argument(
-        "--timeout", type=float, default=2.0, help="Connection timeout for network operations."
+        "--timeout", type=float, default=5.0, help="Connection timeout for verification."
     )
     parser.add_argument("--version", action="version", version=f"llamasniffer {__version__}")
 
     args = parser.parse_args()
 
-    if not any([args.scan_local, args.scan_shodan, args.scan_semantic]):
+    if not any([args.discover, args.test_semantic]):
         parser.print_help()
         return
 
-    if args.scan_local:
-        print(f"Scanning local network with prefix {args.network_prefix}...")
-        instances = discover_ollama_instances(
-            network_prefix=args.network_prefix, timeout=args.timeout
-        )
-        print(f"Found {len(instances)} instances:")
-        for instance in instances:
-            print(json.dumps(instance, indent=2))
-
-    if args.scan_shodan:
+    if args.discover:
         shodan_api_key = os.environ.get("SHODAN_API_KEY")
         if not shodan_api_key:
             print("Error: SHODAN_API_KEY environment variable not set.")
         else:
-            print(f"Scanning Shodan with query '{args.shodan_query}'...")
-            instances = discover_ollama_shodan(
-                shodan_api_key=shodan_api_key, query=args.shodan_query, limit=args.shodan_limit
+            print(f"Discovering remote instances via Shodan (query: '{args.query}', limit: {args.limit})...")
+            instances = discover_remote_instances(
+                shodan_api_key=shodan_api_key, query=args.query, limit=args.limit
             )
-            print(f"Found {len(instances)} instances:")
+            print(f"Discovered {len(instances)} remote instances:")
             for instance in instances:
                 print(json.dumps(instance, indent=2))
 
-    if args.scan_semantic:
+    if args.test_semantic:
         print("Testing semantic model matching...")
         matcher = SemanticModelMatcher()
         test_models = ["llama2:7b", "codellama:13b", "deepseek-coder:6.7b", "phi3:3.8b"]

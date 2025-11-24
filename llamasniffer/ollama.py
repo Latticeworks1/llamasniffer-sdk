@@ -16,42 +16,241 @@ Usage:
 import asyncio
 import json
 import time
+import os
+from pathlib import Path
 from typing import Dict, List, Any, Union
-from .core import DistributedOllamaManager, SemanticModelMatcher, discover_ollama_instances, discover_ollama_shodan
+from .core import DistributedOllamaManager, SemanticModelMatcher, discover_remote_instances
 
 
 class OllamaConfig:
-    """Configuration management for Ollama client."""
+    """Unified configuration management for distributed Ollama client."""
 
-    def __init__(self):
-        self.semantic_enabled = True
-        self.semantic_threshold = 0.3
-        self.auto_discovery = True  # Use LlamaSniffer discovery methods
-        self.strategy = "fastest"
-        self.verbose_resolution = False
-        self.fallback_to_first = True
-        self.instances = None
-        self.shodan_api_key = None
-        self.network_prefix = "192.168.1"  # Default network range
+    def __init__(self, config_path: str = None):
+        self.config_path = config_path or self._find_config_file()
+        self._config = self._load_config()
         self._manager = None
 
+    def _find_config_file(self) -> str:
+        """Find the configuration file in standard locations."""
+        search_paths = [
+            "llamasniffer_config.json",
+            os.path.expanduser("~/.llamasniffer/config.json"),
+            "/etc/llamasniffer/config.json"
+        ]
+        
+        for path in search_paths:
+            if os.path.exists(path):
+                return path
+        
+        # Return default path in current directory
+        return "llamasniffer_config.json"
+
+    def _load_config(self) -> Dict:
+        """Load configuration from JSON file with automatic key detection."""
+        config = self._default_config()
+        
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r') as f:
+                    file_config = json.load(f)
+                    # Merge file config with defaults
+                    self._deep_merge(config, file_config)
+            except (json.JSONDecodeError, IOError) as e:
+                print(f"Warning: Failed to load config from {self.config_path}: {e}")
+        
+        # Auto-detect and populate API keys
+        self._detect_api_keys(config)
+        
+        return config
+
+    def _deep_merge(self, base: Dict, updates: Dict):
+        """Deep merge updates into base dictionary."""
+        for key, value in updates.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                self._deep_merge(base[key], value)
+            else:
+                base[key] = value
+
+    def _detect_api_keys(self, config: Dict):
+        """Automatically detect and populate API keys from environment and files."""
+        # Shodan API key detection
+        if not config["shodan"]["api_key"]:
+            shodan_key = self._find_shodan_key()
+            if shodan_key:
+                config["shodan"]["api_key"] = shodan_key
+                print(f"Auto-detected Shodan API key from system")
+        
+        # Hugging Face token detection
+        if not config["huggingface"]["token"]:
+            hf_token = self._find_huggingface_token()
+            if hf_token:
+                config["huggingface"]["token"] = hf_token
+                print(f"Auto-detected Hugging Face token from system")
+
+    def _find_shodan_key(self) -> str:
+        """Find Shodan API key from environment variables and common file locations."""
+        # Check environment variables
+        env_vars = ['SHODAN_API_KEY', 'SHODAN_KEY', 'SHODAN_TOKEN']
+        for var in env_vars:
+            key = os.environ.get(var)
+            if key and len(key.strip()) > 10:  # Basic validation
+                return key.strip()
+        
+        # Check common file locations
+        key_files = [
+            os.path.expanduser("~/.shodan/api_key"),
+            os.path.expanduser("~/.config/shodan/api_key"), 
+            os.path.expanduser("~/.shodan_key"),
+            "./shodan_key.txt",
+            "./api_keys/shodan.txt"
+        ]
+        
+        for filepath in key_files:
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r') as f:
+                        key = f.read().strip()
+                        if len(key) > 10:  # Basic validation
+                            return key
+                except IOError:
+                    continue
+        
+        return None
+
+    def _find_huggingface_token(self) -> str:
+        """Find Hugging Face token from environment variables and common file locations."""
+        # Check environment variables
+        env_vars = ['HF_TOKEN', 'HUGGINGFACE_TOKEN', 'HUGGING_FACE_HUB_TOKEN']
+        for var in env_vars:
+            token = os.environ.get(var)
+            if token and len(token.strip()) > 10:  # Basic validation
+                return token.strip()
+        
+        # Check common file locations
+        token_files = [
+            os.path.expanduser("~/.huggingface/token"),
+            os.path.expanduser("~/.cache/huggingface/token"),
+            os.path.expanduser("~/.hf_token"),
+            "./hf_token.txt",
+            "./api_keys/huggingface.txt"
+        ]
+        
+        for filepath in token_files:
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r') as f:
+                        token = f.read().strip()
+                        if len(token) > 10:  # Basic validation
+                            return token
+                except IOError:
+                    continue
+        
+        return None
+
+    def _default_config(self) -> Dict:
+        """Return default configuration for remote-only operation."""
+        return {
+            "shodan": {
+                "api_key": None,
+                "query": "ollama",
+                "limit": 10,
+                "search_timeout": 30
+            },
+            "flock": {
+                "instances": [],
+                "verification_timeout": 5.0,
+                "health_check_interval": 60,
+                "max_retries": 3
+            },
+            "semantic": {
+                "enabled": True,
+                "threshold": 0.3,
+                "embedding_model": "text-embedding-nomic-embed-text-v1.5",
+                "embedding_api_url": "http://127.0.0.1:1234/v1/embeddings"
+            },
+            "routing": {
+                "strategy": "fastest",
+                "fallback_to_first": True,
+                "load_balancing": "round_robin"
+            },
+            "huggingface": {
+                "token": None,
+                "username": None,
+                "auto_backup": False,
+                "repo_prefix": "llamasniffer",
+                "dataset_owner": "latterworks"
+            },
+            "client": {
+                "verbose_resolution": False,
+                "custom_headers": {},
+                "timeout": 30
+            }
+        }
+
+    def save(self):
+        """Save current configuration to file."""
+        os.makedirs(os.path.dirname(self.config_path) or '.', exist_ok=True)
+        with open(self.config_path, 'w') as f:
+            json.dump(self._config, f, indent=2)
+
+    # Properties for backward compatibility
+    @property
+    def semantic_enabled(self) -> bool:
+        return self._config["semantic"]["enabled"]
+    
+    @property
+    def semantic_threshold(self) -> float:
+        return self._config["semantic"]["threshold"]
+    
+    @property
+    def strategy(self) -> str:
+        return self._config["routing"]["strategy"]
+    
+    @property
+    def verbose_resolution(self) -> bool:
+        return self._config["client"]["verbose_resolution"]
+    
+    @property
+    def fallback_to_first(self) -> bool:
+        return self._config["routing"]["fallback_to_first"]
+    
+    @property
+    def instances(self) -> List[Dict]:
+        return self._config["flock"]["instances"]
+    
+    @property
+    def shodan_api_key(self) -> str:
+        return self._config["shodan"]["api_key"]
+
+    # Configuration methods
     def set_semantic_matching(self, enabled: bool = True, threshold: float = 0.3):
         """Configure semantic model matching behavior."""
-        self.semantic_enabled = enabled
-        self.semantic_threshold = threshold
+        self._config["semantic"]["enabled"] = enabled
+        self._config["semantic"]["threshold"] = threshold
 
     def set_load_balancing(self, strategy: str = "fastest"):
         """Set load balancing strategy: 'fastest', 'round_robin', 'least_loaded'."""
-        self.strategy = strategy
+        self._config["routing"]["strategy"] = strategy
 
     def set_verbose(self, enabled: bool = True):
         """Enable verbose model resolution logging."""
-        self.verbose_resolution = enabled
+        self._config["client"]["verbose_resolution"] = enabled
 
     def set_instances(self, instances: List[Dict] = None):
-        """Manually configure Ollama instances."""
-        self.instances = instances
+        """Manually configure remote Ollama instances."""
+        self._config["flock"]["instances"] = instances or []
         self._manager = None  # Reset manager to use new instances
+    
+    def set_huggingface(self, token: str = None, username: str = None, auto_backup: bool = False, repo_prefix: str = "llamasniffer"):
+        """Configure Hugging Face integration."""
+        self._config["huggingface"]["token"] = token
+        self._config["huggingface"]["username"] = username
+        self._config["huggingface"]["auto_backup"] = auto_backup
+        self._config["huggingface"]["repo_prefix"] = repo_prefix
+
+    def set_shodan_key(self, api_key: str):
+        """Configure Shodan API key for global discovery."""
+        self._config["shodan"]["api_key"] = api_key
 
 
 class OllamaClient:
@@ -75,24 +274,16 @@ class OllamaClient:
                             "verified": True, "models": [], "response_time_ms": 0}]
             elif self.config.instances:
                 instances = self.config.instances
-            elif self.config.auto_discovery:
-                # Use LlamaSniffer discovery methods
+            else:
+                # Remote-only discovery via Shodan
                 instances = []
                 
-                # Network discovery first
-                if self.config.network_prefix:
-                    network_instances = discover_ollama_instances(
-                        network_prefix=self.config.network_prefix
-                    )
-                    instances.extend(network_instances)
-                
-                # Shodan discovery if API key provided
                 if self.config.shodan_api_key:
                     try:
-                        shodan_instances = discover_ollama_shodan(
+                        shodan_instances = discover_remote_instances(
                             shodan_api_key=self.config.shodan_api_key,
                             query="ollama",
-                            limit=10
+                            limit=self.config._config["shodan"]["limit"]
                         )
                         instances.extend(shodan_instances)
                     except Exception as e:
@@ -100,10 +291,8 @@ class OllamaClient:
                 
                 if not instances:
                     raise ConnectionError(
-                        "No Ollama instances discovered. Configure Shodan API key or set explicit instances."
+                        "No Ollama instances discovered. Configure Shodan API key or set explicit remote instances."
                     )
-            else:
-                raise ValueError("No instances configured and auto-discovery disabled")
 
             self._manager = DistributedOllamaManager(
                 instances=instances,
@@ -202,9 +391,13 @@ class OllamaClient:
         available_instances = manager._get_available_instances_for_model(model)
         if not available_instances:
             raise RuntimeError(f"No instances available for model: {model}")
-        
-        instance = available_instances[0]
-        url = f"http://{instance['host']}:{instance['port']}/api/generate"
+
+        instance_key = manager._select_optimal_instance(available_instances) or available_instances[0]
+        client = manager.clients.get(instance_key)
+        if not client:
+            raise RuntimeError(f"Instance client not found for: {instance_key}")
+
+        url = f"http://{client.host}:{client.port}/api/generate"
         
         payload = {
             "model": model,
@@ -299,9 +492,13 @@ class OllamaClient:
         available_instances = manager._get_available_instances_for_model(model)
         if not available_instances:
             raise RuntimeError(f"No instances available for model: {model}")
-        
-        instance = available_instances[0]
-        url = f"http://{instance['host']}:{instance['port']}/api/generate"
+
+        instance_key = manager._select_optimal_instance(available_instances) or available_instances[0]
+        client = manager.clients.get(instance_key)
+        if not client:
+            raise RuntimeError(f"Instance client not found for: {instance_key}")
+
+        url = f"http://{client.host}:{client.port}/api/generate"
         
         payload = {
             "model": model,
@@ -417,9 +614,13 @@ class OllamaClient:
         available_instances = manager._get_available_instances_for_model(resolved_model)
         if not available_instances:
             raise RuntimeError(f"No instances available for model: {resolved_model}")
-        
-        instance = available_instances[0]
-        url = f"http://{instance['host']}:{instance['port']}/api/embed"
+
+        instance_key = manager._select_optimal_instance(available_instances) or available_instances[0]
+        client = manager.clients.get(instance_key)
+        if not client:
+            raise RuntimeError(f"Instance client not found for: {instance_key}")
+
+        url = f"http://{client.host}:{client.port}/api/embed"
         
         payload = {
             "model": resolved_model,
@@ -705,9 +906,12 @@ def configure(
     verbose: bool = False,
     instances: List[Dict] = None,
     shodan_api_key: str = None,
-    network_prefix: str = "192.168.1",
+    hf_token: str = None,
+    hf_username: str = None,
+    hf_auto_backup: bool = False,
+    hf_repo_prefix: str = "llamasniffer",
 ) -> None:
-    """Configure the global Ollama client."""
+    """Configure the global Ollama client for remote-only operation."""
     global _client, _config
 
     _config.set_semantic_matching(semantic_enabled, semantic_threshold)
@@ -716,8 +920,11 @@ def configure(
     if instances:
         _config.set_instances(instances)
     if shodan_api_key:
-        _config.shodan_api_key = shodan_api_key
-    _config.network_prefix = network_prefix
+        _config.set_shodan_key(shodan_api_key)
+    
+    # Configure Hugging Face integration
+    if hf_token or hf_username:
+        _config.set_huggingface(hf_token, hf_username, hf_auto_backup, hf_repo_prefix)
 
     # Reset client to use new configuration
     _client = OllamaClient(_config)
@@ -728,10 +935,107 @@ def inspect_resolution() -> Dict[str, Any]:
     return _client.inspect_last_resolution()
 
 
+def auto_discover_instances(limit: int = 10, use_cache: bool = True, ttl_hours: int = 24,
+                          quality_check: bool = True, min_quality: float = 0.5) -> List[Dict]:
+    """Discover remote Ollama instances using auto-detected Shodan API key from config.
+
+    Convenience function that automatically detects the Shodan API key from:
+    - Environment variables (SHODAN_API_KEY, SHODAN_KEY, SHODAN_TOKEN)
+    - Config files (~/.shodan/api_key, ./shodan_key.txt, etc.)
+    - llamasniffer config file
+
+    By default, uses cached endpoints if available (refreshes every 24 hours).
+    Also performs quality checks to filter out broken/garbled models.
+
+    For explicit API key control, use discover_remote_instances() from core module.
+
+    Args:
+        limit: Maximum number of instances to discover (default: 10)
+        use_cache: Use cached endpoints if available (default: True)
+        ttl_hours: Cache time-to-live in hours (default: 24)
+        quality_check: Test endpoints and filter out low-quality ones (default: True)
+        min_quality: Minimum quality score to accept (0.0-1.0, default: 0.5)
+
+    Returns:
+        List of discovered, quality-validated remote Ollama instances
+    """
+    global _config
+
+    # Try to use cache first
+    if use_cache:
+        from .endpoint_cache import EndpointCache
+        cache = EndpointCache(ttl_hours=ttl_hours)
+        cached_endpoints = cache.get_endpoints()
+
+        if cached_endpoints:
+            cache_info = cache.get_cache_info()
+            print(f"Using cached endpoints ({len(cached_endpoints)} instances, age: {cache_info['age_hours']:.1f}h)")
+            return cached_endpoints[:limit]  # Return up to limit from cache
+
+    # No valid cache, need to scan
+    if not _config.shodan_api_key:
+        raise ValueError("No Shodan API key found. Set SHODAN_API_KEY environment variable or create shodan_key.txt file")
+
+    try:
+        from .core import discover_remote_instances
+        from .endpoint_cache import EndpointCache
+        from .quality_control import filter_quality_endpoints
+
+        print(f"Scanning Shodan for fresh endpoints...")
+        endpoints = discover_remote_instances(
+            shodan_api_key=_config.shodan_api_key,
+            query="ollama",
+            limit=limit * 2  # Get more since we'll filter some out
+        )
+
+        # Quality check endpoints if requested
+        if quality_check and endpoints:
+            print(f"Quality testing {len(endpoints)} endpoints...")
+            endpoints = filter_quality_endpoints(
+                endpoints,
+                min_score=min_quality,
+                timeout=10.0,
+                verbose=True
+            )
+            print(f"✅ {len(endpoints)} endpoints passed quality checks")
+
+        # Cache the results
+        if use_cache and endpoints:
+            cache = EndpointCache(ttl_hours=ttl_hours)
+            cache.save(endpoints, metadata={
+                'query': 'ollama',
+                'limit': limit,
+                'source': 'shodan',
+                'quality_checked': quality_check,
+                'min_quality': min_quality
+            })
+            print(f"Cached {len(endpoints)} quality endpoints (expires in {ttl_hours}h)")
+
+        return endpoints[:limit]  # Return up to requested limit
+    except Exception as e:
+        print(f"Remote discovery failed: {e}")
+        return []
+
+
 def get_cluster_status() -> Dict[str, Any]:
     """Get distributed cluster status."""
     manager = _client._get_manager()
     return manager.get_cluster_status()
+
+
+def get_flock_status() -> Dict[str, Any]:
+    """Get distributed flock status and intelligence."""
+    manager = _client._get_manager()
+    status = manager.get_cluster_status()
+    
+    # Transform cluster terminology to flock terminology
+    flock_status = {
+        "flock_health": status["cluster_health"],
+        "model_availability": status["model_availability"],
+        "performance_stats": status["performance_stats"]
+    }
+    
+    return flock_status
 
 
 def get_cached_endpoints() -> Dict[str, Any]:
@@ -780,6 +1084,52 @@ def get_cached_endpoints() -> Dict[str, Any]:
     }
 
 
+def get_flock_nodes() -> Dict[str, Any]:
+    """Get detailed info about all nodes in the flock."""
+    manager = _client._get_manager()
+    
+    node_details = []
+    for instance in manager.instances:
+        node_info = {
+            "host": instance["host"],
+            "port": instance["port"],
+            "url": f"http://{instance['host']}:{instance['port']}",
+            "verified": instance.get("verified", False),
+            "models": instance.get("models", []),
+            "discovery_method": instance.get("discovery_method", "unknown"),
+            "discovered_at": instance.get("discovered_at", 0),
+            "response_time_ms": instance.get("response_time_ms", 0),
+            "version": instance.get("version", "unknown"),
+            "last_updated": instance.get("last_health_check", 0),
+        }
+        
+        # Add performance stats if available
+        instance_key = f"{instance['host']}:{instance['port']}"
+        if instance_key in manager.instance_stats:
+            stats = manager.instance_stats[instance_key]
+            node_info.update({
+                "total_requests": stats["total_requests"],
+                "successful_requests": stats["successful_requests"],
+                "success_rate": round((stats["successful_requests"] / max(stats["total_requests"], 1)) * 100, 1),
+                "avg_response_time": round(stats["average_response_time"], 2),
+                "current_load": stats["current_load"],
+                "is_healthy": instance_key not in manager.failed_instances,
+            })
+        
+        node_details.append(node_info)
+    
+    return {
+        "total_nodes": len(node_details),
+        "active_nodes": len([n for n in node_details if n.get("is_healthy", True)]),
+        "failed_nodes": len(manager.failed_instances),
+        "discovery_summary": {
+            method: len([n for n in node_details if n["discovery_method"] == method])
+            for method in set(n["discovery_method"] for n in node_details)
+        },
+        "nodes": node_details,
+    }
+
+
 def refresh_endpoint_health() -> Dict[str, Any]:
     """Force refresh health check on all cached endpoints."""
     manager = _client._get_manager()
@@ -802,6 +1152,403 @@ def refresh_endpoint_health() -> Dict[str, Any]:
     }
 
 
+def refresh_flock_health() -> Dict[str, Any]:
+    """Force refresh health check across the flock."""
+    manager = _client._get_manager()
+    
+    refreshed = 0
+    errors = []
+    
+    for instance_key in list(manager.failed_instances):
+        try:
+            if manager._health_check_instance(instance_key):
+                manager.failed_instances.discard(instance_key)
+                refreshed += 1
+        except Exception as e:
+            errors.append(f"{instance_key}: {str(e)}")
+    
+    return {
+        "refreshed_nodes": refreshed,
+        "errors": errors,
+        "current_status": get_flock_status(),
+    }
+
+
+def parallel_generate_flock(
+    model: str, 
+    prompt: str, 
+    count: int = 10, 
+    max_nodes: int = None,
+    timeout: float = 60.0,
+    backup_to_hf: bool = False,
+    hf_repo: str = None
+) -> List[Dict[str, Any]]:
+    """Generate multiple synthetic data samples in parallel across the flock.
+    
+    Args:
+        model: Model name or semantic description
+        prompt: Generation prompt to send to all nodes
+        count: Number of parallel generations desired
+        max_nodes: Maximum nodes to use (defaults to min(count, available_nodes))
+        timeout: Timeout per generation in seconds
+        backup_to_hf: Whether to backup results to Hugging Face
+        hf_repo: HF repository (format: 'username/repo-name')
+        
+    Returns:
+        Dictionary with generation results and metadata
+    """
+    import threading
+    import time
+    
+    manager = _client._get_manager()
+    
+    # Resolve model semantically
+    resolution = manager._resolve_model_name(model)
+    if not resolution:
+        raise ValueError(f"Could not resolve model: '{model}'")
+    
+    resolved_model = resolution["model"]
+    available_instances = manager._get_available_instances_for_model(resolved_model)
+    
+    if not available_instances:
+        raise RuntimeError(f"No available nodes for model: {resolved_model}")
+    
+    # Determine how many nodes to use
+    nodes_to_use = min(count, len(available_instances))
+    if max_nodes:
+        nodes_to_use = min(nodes_to_use, max_nodes)
+    
+    selected_instances = available_instances[:nodes_to_use]
+    
+    # If we need more generations than nodes, some nodes will do multiple
+    generations_per_node = count // len(selected_instances)
+    extra_generations = count % len(selected_instances)
+    
+    results = []
+    threads = []
+    results_lock = threading.Lock()
+    
+    def execute_generations(instance_key: str, num_generations: int):
+        """Execute multiple generations on a single node."""
+        try:
+            client = manager.clients[instance_key]
+            
+            for i in range(num_generations):
+                start_time = time.time()
+                result = client.generate(resolved_model, prompt)
+                response_time = (time.time() - start_time) * 1000
+                
+                if "error" not in result:
+                    generation_result = {
+                        "response": result.get("response", ""),
+                        "model": resolved_model,
+                        "model_resolution": resolution,
+                        "execution_metadata": {
+                            "instance": instance_key,
+                            "generation_id": f"{instance_key}_{i}",
+                            "response_time_ms": round(response_time, 2),
+                            "strategy": "parallel_synthetic",
+                            "node_generation_index": i
+                        }
+                    }
+                    
+                    with results_lock:
+                        results.append(generation_result)
+                    
+                    manager._update_instance_stats(instance_key, response_time, True)
+                else:
+                    with results_lock:
+                        results.append({
+                            "error": result.get("error", "Unknown error"),
+                            "instance": instance_key,
+                            "generation_id": f"{instance_key}_{i}"
+                        })
+                    manager._update_instance_stats(instance_key, response_time, False)
+                        
+        except Exception as e:
+            with results_lock:
+                results.append({
+                    "error": str(e),
+                    "instance": instance_key
+                })
+            manager._update_instance_stats(instance_key, 0, False)
+    
+    # Distribute work across nodes
+    for i, instance_key in enumerate(selected_instances):
+        num_gens = generations_per_node
+        if i < extra_generations:  # Distribute extra generations
+            num_gens += 1
+            
+        thread = threading.Thread(
+            target=execute_generations, 
+            args=(instance_key, num_gens),
+            daemon=True
+        )
+        threads.append(thread)
+        thread.start()
+    
+    # Wait for all generations with timeout
+    start_time = time.time()
+    for thread in threads:
+        remaining_time = timeout - (time.time() - start_time)
+        if remaining_time > 0:
+            thread.join(timeout=remaining_time)
+        else:
+            break
+    
+    # Filter successful results
+    successful_results = [r for r in results if "error" not in r]
+    
+    result_data = {
+        "synthetic_data": successful_results,
+        "total_requested": count,
+        "total_generated": len(successful_results),
+        "nodes_used": len(selected_instances),
+        "generation_summary": {
+            "successful": len(successful_results),
+            "failed": len(results) - len(successful_results),
+            "success_rate": round(len(successful_results) / max(len(results), 1) * 100, 1)
+        },
+        "flock_metadata": {
+            "model_resolution": resolution,
+            "nodes_utilized": selected_instances,
+            "total_response_time": sum(r.get("execution_metadata", {}).get("response_time_ms", 0) 
+                                     for r in successful_results),
+            "average_response_time": round(
+                sum(r.get("execution_metadata", {}).get("response_time_ms", 0) for r in successful_results) 
+                / max(len(successful_results), 1), 2
+            )
+        }
+    }
+    
+    # Backup to Hugging Face if requested
+    if backup_to_hf and successful_results:
+        try:
+            backup_result = backup_flock_data(
+                data=successful_results,
+                data_type="synthetic_generation",
+                hf_repo=hf_repo,
+                metadata={
+                    "prompt": prompt,
+                    "model": resolved_model,
+                    "generation_count": len(successful_results),
+                    "flock_nodes": selected_instances
+                }
+            )
+            result_data["hf_backup"] = backup_result
+        except Exception as e:
+            result_data["hf_backup"] = {"error": str(e)}
+    
+    return result_data
+
+
+def setup_hf_auth(token: str = None) -> bool:
+    """Setup Hugging Face authentication using CLI or provided token.
+    
+    Args:
+        token: Optional HF token. If not provided, uses huggingface-cli login
+        
+    Returns:
+        True if authentication successful
+    """
+    try:
+        from huggingface_hub import login, whoami
+        import subprocess
+        import os
+        
+        if token:
+            # Use provided token
+            login(token=token)
+            print("✅ Hugging Face authentication successful (token)")
+        else:
+            # Check if already logged in
+            try:
+                user_info = whoami()
+                print(f"✅ Already logged in to Hugging Face as: {user_info['name']}")
+                return True
+            except:
+                # Need to login via CLI
+                print("🔐 Please authenticate with Hugging Face...")
+                print("Run: huggingface-cli login")
+                
+                # Try automatic CLI login
+                try:
+                    result = subprocess.run(
+                        ["huggingface-cli", "login"],
+                        capture_output=False,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        print("✅ Hugging Face CLI authentication successful")
+                    else:
+                        print("❌ CLI authentication failed. Please run manually: huggingface-cli login")
+                        return False
+                except FileNotFoundError:
+                    print("❌ huggingface-cli not found. Install with: pip install huggingface_hub[cli]")
+                    return False
+        
+        # Verify authentication
+        whoami()
+        return True
+        
+    except Exception as e:
+        print(f"❌ HF authentication error: {e}")
+        return False
+
+
+def backup_flock_data(
+    data: List[Dict], 
+    data_type: str,
+    hf_repo: str = None,
+    metadata: Dict = None
+) -> Dict[str, Any]:
+    """Backup flock data to Hugging Face with automatic authentication.
+    
+    Args:
+        data: Data to backup (flock nodes, synthetic generations, etc.)
+        data_type: Type of data ('flock_discovery', 'synthetic_generation', 'flock_health')
+        hf_repo: HF repository (format: 'username/repo-name')
+        metadata: Additional metadata to include
+        
+    Returns:
+        Backup result with repository info
+    """
+    try:
+        from datasets import Dataset
+        from huggingface_hub import HfApi, create_repo, whoami
+        import time
+        
+        # Check authentication
+        try:
+            user_info = whoami()
+            username = user_info['name']
+        except:
+            print("❌ Not authenticated with Hugging Face. Run setup_hf_auth() first.")
+            return {"error": "Authentication required"}
+        
+        # Determine repository
+        if not hf_repo:
+            hf_repo = f"{username}/llamasniffer-{data_type}"
+        
+        # Prepare data for dataset
+        timestamp = time.strftime('%Y-%m-%d_%H-%M-%S')
+        dataset_data = []
+        
+        for i, item in enumerate(data):
+            record = {
+                "id": f"{data_type}_{timestamp}_{i}",
+                "timestamp": timestamp,
+                "data_type": data_type,
+                **item
+            }
+            
+            # Add metadata if provided
+            if metadata:
+                record["metadata"] = metadata
+                
+            dataset_data.append(record)
+        
+        # Create dataset
+        dataset = Dataset.from_list(dataset_data)
+        
+        # Create repository if it doesn't exist
+        try:
+            create_repo(
+                repo_id=hf_repo,
+                repo_type="dataset",
+                exist_ok=True
+            )
+        except Exception as e:
+            print(f"Repository creation info: {e}")
+        
+        # Push to hub
+        commit_message = f"LlamaSniffer {data_type} backup - {timestamp}"
+        if metadata and "prompt" in metadata:
+            commit_message += f" | Prompt: {metadata['prompt'][:50]}..."
+            
+        dataset.push_to_hub(
+            repo_id=hf_repo,
+            commit_message=commit_message
+        )
+        
+        backup_url = f"https://huggingface.co/datasets/{hf_repo}"
+        
+        return {
+            "success": True,
+            "repository": hf_repo,
+            "url": backup_url,
+            "records_uploaded": len(dataset_data),
+            "timestamp": timestamp,
+            "commit_message": commit_message
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def backup_flock_nodes(hf_repo: str = None) -> Dict[str, Any]:
+    """Backup current flock discovery data to Hugging Face.
+    
+    Args:
+        hf_repo: HF repository (optional, auto-generated if not provided)
+        
+    Returns:
+        Backup result
+    """
+    try:
+        nodes = get_flock_nodes()
+        
+        return backup_flock_data(
+            data=nodes["nodes"],
+            data_type="flock_discovery",
+            hf_repo=hf_repo,
+            metadata={
+                "total_nodes": nodes["total_nodes"],
+                "active_nodes": nodes["active_nodes"],
+                "discovery_methods": nodes["discovery_summary"]
+            }
+        )
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def backup_flock_health(hf_repo: str = None) -> Dict[str, Any]:
+    """Backup current flock health and performance data to Hugging Face.
+    
+    Args:
+        hf_repo: HF repository (optional, auto-generated if not provided)
+        
+    Returns:
+        Backup result
+    """
+    try:
+        flock_status = get_flock_status()
+        
+        # Convert to list format for dataset
+        health_data = [{
+            "flock_health_percentage": flock_status["flock_health"]["health_percentage"],
+            "total_instances": flock_status["flock_health"]["total_instances"],
+            "healthy_instances": flock_status["flock_health"]["healthy_instances"],
+            "unique_models": flock_status["model_availability"]["unique_models"],
+            "model_distribution": flock_status["model_availability"]["distribution"],
+            "performance_stats": flock_status["performance_stats"]
+        }]
+        
+        return backup_flock_data(
+            data=health_data,
+            data_type="flock_health",
+            hf_repo=hf_repo,
+            metadata={
+                "backup_type": "health_snapshot",
+                "models_available": flock_status["model_availability"]["models"]
+            }
+        )
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Create ollama-compatible object for import ollama syntax
 class OllamaModule:
     """Module object to support 'import ollama' syntax."""
@@ -822,6 +1569,17 @@ class OllamaModule:
         self.push = push
         self.configure = configure
         self.inspect_resolution = inspect_resolution
+        # Flock-based methods
+        self.get_flock_status = get_flock_status
+        self.get_flock_nodes = get_flock_nodes
+        self.refresh_flock_health = refresh_flock_health
+        self.parallel_generate_flock = parallel_generate_flock
+        # Hugging Face integration
+        self.setup_hf_auth = setup_hf_auth
+        self.backup_flock_data = backup_flock_data
+        self.backup_flock_nodes = backup_flock_nodes
+        self.backup_flock_health = backup_flock_health
+        # Backward compatibility aliases
         self.get_cluster_status = get_cluster_status
         self.get_cached_endpoints = get_cached_endpoints
         self.refresh_endpoint_health = refresh_endpoint_health

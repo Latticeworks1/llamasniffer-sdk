@@ -13,13 +13,12 @@ __email__ = "dev@latticeworks1.com"
 
 from .core import (
     # Main classes
-    OllamaDiscovery,
+    RemoteDiscovery,
     OllamaClient,
     DistributedOllamaManager,
     SemanticModelMatcher,
     # Convenience functions
-    discover_ollama_instances,
-    discover_ollama_shodan,
+    discover_remote_instances,
     connect_to_ollama,
     create_distributed_manager,
 )
@@ -36,19 +35,52 @@ from .ollama import (
     ps,
     configure,
     inspect_resolution,
+    auto_discover_instances,
     get_cluster_status,
     OllamaConfig,
 )
 
+# Import distributed task queue
+from .tasks import ParallelTaskQueue, TaskPriority, TaskStatus, Task
+
+# Import dataset creation
+from .dataset_forge import (
+    DatasetForge,
+    DatasetConfig,
+    DatasetType,
+    QualityLevel,
+    create_synthetic_dataset,
+)
+
+# Import HF integration
+from .hf_uploader import (
+    HuggingFaceUploader,
+)
+
+# Import endpoint caching
+from .endpoint_cache import (
+    EndpointCache,
+    get_cached_endpoints,
+    cache_endpoints,
+    get_cache_info,
+    clear_cache,
+)
+
+# Import quality control
+from .quality_control import (
+    EndpointQualityChecker,
+    validate_endpoint_quality,
+    filter_quality_endpoints,
+)
+
 __all__ = [
     # Core Classes
-    "OllamaDiscovery",
+    "RemoteDiscovery",
     "OllamaClient",
     "DistributedOllamaManager",
     "SemanticModelMatcher",
     # Core Functions
-    "discover_ollama_instances",
-    "discover_ollama_shodan",
+    "discover_remote_instances",
     "connect_to_ollama",
     "create_distributed_manager",
     # Ollama Interface
@@ -62,8 +94,28 @@ __all__ = [
     "ps",
     "configure",
     "inspect_resolution",
+    "auto_discover_instances",
     "get_cluster_status",
     "OllamaConfig",
+    # Distributed Task Queue
+    "ParallelTaskQueue",
+    "TaskPriority",
+    "TaskStatus",
+    "Task",
+    # Dataset Creation
+    "DatasetForge",
+    "DatasetConfig",
+    "DatasetType", 
+    "QualityLevel",
+    "create_synthetic_dataset",
+    # HF Integration
+    "HuggingFaceUploader",
+    # Endpoint Caching
+    "EndpointCache",
+    "get_cached_endpoints",
+    "cache_endpoints",
+    "get_cache_info",
+    "clear_cache",
     # Metadata
     "__version__",
     "__version_info__",
