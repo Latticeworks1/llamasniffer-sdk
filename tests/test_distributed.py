@@ -37,7 +37,7 @@ class StubDiscovery:
 
 @pytest.fixture(autouse=True)
 def patch_ollama_client(monkeypatch):
-    monkeypatch.setattr("llamasniffer.core.OllamaClient", StubOllamaClient)
+    monkeypatch.setattr("llamasniffer.core._OllamaClient", StubOllamaClient)
 
 
 def test_discover_remote_instances_uses_remote_discovery(monkeypatch):

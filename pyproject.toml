@@ -38,9 +38,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Latticeworks1/llamasniffer"
-Repository = "https://github.com/Latticeworks1/llamasniffer"
-Issues = "https://github.com/Latticeworks1/llamasniffer/issues"
+Homepage = "https://github.com/Latticeworks1/llamasniffer-sdk"
+Repository = "https://github.com/Latticeworks1/llamasniffer-sdk"
+Issues = "https://github.com/Latticeworks1/llamasniffer-sdk/issues"
+Documentation = "https://github.com/Latticeworks1/llamasniffer-sdk#readme"
 
 [tool.uv]
 dev-dependencies = [
