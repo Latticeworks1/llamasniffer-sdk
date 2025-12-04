@@ -122,9 +122,13 @@ class SchemaCompiler:
                 )
             else:
                 # Complex field definition
+                field_type = field_def.get('type', 'text')
+                if isinstance(field_type, str):
+                    field_type = FieldType(field_type)
+
                 field = FieldSchema(
                     name=field_name,
-                    type=FieldType(field_def.get('type', 'text')),
+                    type=field_type,
                     description=field_def.get('description', ''),
                     required=field_def.get('required', True),
                     validation_rules=field_def.get('validation', {}),
