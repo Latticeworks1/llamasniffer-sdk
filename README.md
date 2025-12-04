@@ -38,6 +38,60 @@ pip install llamasniffer
 
 ⸻
 
+## Drop-In Replacement for Ollama
+
+LlamaSniffer provides a **zero-code replacement** for the standard Ollama Python client. Just swap the import:
+
+```python
+# Before: Standard Ollama
+# from ollama import Client
+# client = Client(host='http://localhost:11434')
+
+# After: LlamaSniffer (distributed + semantic routing)
+from llamasniffer import ollama
+
+# Same API, global reach
+response = ollama.chat(
+    model='llama3',  # Or use semantic: 'reasoning', 'coding', etc.
+    messages=[{'role': 'user', 'content': 'Hello'}]
+)
+```
+
+### Using with OpenAI-Style Code
+
+Since LlamaSniffer is Ollama-compatible, you can use it anywhere that accepts Ollama:
+
+```python
+# Works with LiteLLM, LangChain, or any Ollama-compatible library
+from llamasniffer import ollama
+
+# Configure once for distributed discovery
+ollama.configure(shodan_api_key='your-key')
+
+# Now all ollama.* calls route through the global flock
+response = ollama.chat(model='llama3', messages=[...])
+```
+
+### Environment Variable Configuration
+
+Set up LlamaSniffer to auto-configure:
+
+```bash
+export SHODAN_API_KEY="your-shodan-key"
+export HF_TOKEN="your-huggingface-token"  # Optional, for dataset uploads
+```
+
+Then use without explicit configuration:
+
+```python
+from llamasniffer import ollama
+
+# Auto-discovers instances via Shodan
+response = ollama.generate(model='general', prompt='Hello world')
+```
+
+⸻
+
 ## Quick Start
 
 ```python
@@ -120,6 +174,18 @@ It tracks uptime, latency, and semantic match accuracy across the global network
 ⸻
 
 ## Complete Ollama API Compatibility
+
+LlamaSniffer implements the full Ollama Python client API. Use it as a **drop-in replacement** in existing code:
+
+```python
+# Replace this:
+# import ollama
+
+# With this:
+from llamasniffer import ollama
+
+# Everything else stays the same!
+```
 
 All Ollama methods are supported with global reach and distributed intelligence:
 
@@ -222,7 +288,10 @@ async def run_batch():
     results = await queue.wait_for_batch(task_ids)
 
     stats = queue.get_stats()
-    print(f"Completed: {stats['tasks']['completed']} (avg {stats['performance']['avg_latency']}s)")
+    print(f"Completed: {stats['tasks']['completed']}/{stats['tasks']['submitted']}")
+    print(f"Success rate: {stats['tasks']['success_rate']}%")
+    print(f"Avg latency: {stats['performance']['avg_latency']:.2f}s")
+    print(f"Active workers: {stats['workers']['active']}/{stats['workers']['configured']}")
 
     await queue.stop()
     return results
@@ -235,6 +304,90 @@ asyncio.run(run_batch())
 - Dataset helper via `process_dataset()` for 100k+ record fan-out
 - Real-time stats with throughput, latency, and queue depth
 - Legacy FlockShepherd/FlockHerder APIs have been removed in favor of this queue
+
+⸻
+
+## Synthetic Dataset Generation
+
+Generate high-quality synthetic datasets using your distributed flock:
+
+```python
+import asyncio
+from llamasniffer import DatasetForge, DatasetConfig, DatasetType, QualityLevel
+
+async def generate_dataset():
+    config = DatasetConfig(
+        dataset_type=DatasetType.REASONING,
+        target_size=1000,
+        quality_level=QualityLevel.HIGH,
+        models=['llama3', 'deepseek-r1', 'qwen'],
+        batch_size=50,
+        require_consensus=True,  # Multiple models must agree
+        deduplicate=True
+    )
+
+    forge = DatasetForge(config)
+    dataset = await forge.forge_dataset()
+
+    print(f"Generated {len(dataset['data'])} samples")
+    print(f"Quality score: {dataset['metadata']['quality_score']}")
+
+    return dataset
+
+asyncio.run(generate_dataset())
+```
+
+### Available Dataset Types
+
+- **QA_PAIRS** - Question and answer pairs
+- **CONVERSATIONS** - Multi-turn dialogues
+- **INSTRUCTIONS** - Task instructions and responses
+- **CODE_COMPLETION** - Code generation examples
+- **REASONING** - Step-by-step problem solving
+- **CLASSIFICATION** - Labeled classification data
+- **SUMMARIZATION** - Text summarization pairs
+- **TRANSLATION** - Multi-language translation
+
+### Quality Levels
+
+- **BASIC** - Fast generation, minimal validation
+- **STANDARD** - Balanced quality and speed
+- **HIGH** - Multiple model consensus, strict validation
+- **PREMIUM** - Maximum quality, extensive validation
+
+### CLI Tool
+
+```bash
+# Generate from YAML config
+python -m llamasniffer.dataset_cli generate config.yaml
+
+# Create example configurations
+python -m llamasniffer.dataset_cli examples
+
+# With HuggingFace auto-upload
+python -m llamasniffer.dataset_cli generate config.yaml --upload
+```
+
+See `config_examples/` for ready-to-use templates.
+
+### HuggingFace Integration
+
+Auto-upload datasets to HuggingFace Hub:
+
+```python
+from llamasniffer import HuggingFaceUploader
+
+uploader = HuggingFaceUploader(
+    username="your-hf-username",
+    token="your-hf-token"  # Auto-detected if configured
+)
+
+uploader.upload_dataset(
+    dataset=dataset,
+    repo_name="my-reasoning-dataset",
+    private=False
+)
+```
 
 ⸻
 
