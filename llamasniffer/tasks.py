@@ -109,6 +109,10 @@ class ParallelTaskQueue:
         self._running: bool = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+        # Locks for thread-safe concurrent access
+        self._tasks_lock: Optional[asyncio.Lock] = None
+        self._metrics_lock: Optional[asyncio.Lock] = None
+
         self._current_running = 0
         self._peak_running = 0
         self._start_time: Optional[float] = None
@@ -154,6 +158,8 @@ class ParallelTaskQueue:
 
         self._loop = asyncio.get_running_loop()
         self._new_task_event = asyncio.Event()
+        self._tasks_lock = asyncio.Lock()
+        self._metrics_lock = asyncio.Lock()
         self._running = True
         self._start_time = time.time()
 
@@ -199,9 +205,12 @@ class ParallelTaskQueue:
             max_retries=self.default_max_retries if max_retries is None else max_retries,
         )
 
-        self.active_tasks[task.id] = task
-        self.priority_queues[resolved_priority].append(task)
-        self._metrics["submitted"] += 1
+        async with self._tasks_lock:
+            self.active_tasks[task.id] = task
+            self.priority_queues[resolved_priority].append(task)
+
+        async with self._metrics_lock:
+            self._metrics["submitted"] += 1
 
         future = loop.create_future()
         self._task_futures[task.id] = future
@@ -408,7 +417,7 @@ class ParallelTaskQueue:
             task.status = TaskStatus.COMPLETED
             task.completed_at = time.time()
 
-            self._finalize_task(task)
+            await self._finalize_task(task)
         except asyncio.TimeoutError:
             await self._handle_task_failure(task, "Task timed out")
         except Exception as exc:
@@ -424,7 +433,8 @@ class ParallelTaskQueue:
         if task.retry_count <= task.max_retries:
             task.status = TaskStatus.PENDING
             task.started_at = None
-            self._metrics["retries"] += 1
+            async with self._metrics_lock:
+                self._metrics["retries"] += 1
             self.priority_queues[task.priority].append(task)
             if self._new_task_event:
                 self._new_task_event.set()
@@ -432,12 +442,18 @@ class ParallelTaskQueue:
 
         task.status = TaskStatus.FAILED
         task.completed_at = time.time()
-        self._finalize_task(task, failed=True)
+        await self._finalize_task(task, failed=True)
 
-    def _finalize_task(self, task: Task, failed: bool = False) -> None:
+    async def _finalize_task(self, task: Task, failed: bool = False) -> None:
         """Move task to completed/failed tracking and resolve waiters."""
-        if task.id in self.active_tasks:
-            del self.active_tasks[task.id]
+        async with self._tasks_lock:
+            if task.id in self.active_tasks:
+                del self.active_tasks[task.id]
+
+            if failed:
+                self.failed_tasks[task.id] = task
+            else:
+                self.completed_tasks[task.id] = task
 
         payload = {
             "status": task.status.value,
@@ -448,14 +464,13 @@ class ParallelTaskQueue:
             "instance": task.assigned_instance,
         }
 
-        if failed:
-            self.failed_tasks[task.id] = task
-            self._metrics["failed"] += 1
-        else:
-            self.completed_tasks[task.id] = task
-            self._metrics["completed"] += 1
-            if task.duration():
-                self._metrics["total_latency"] += task.duration()
+        async with self._metrics_lock:
+            if failed:
+                self._metrics["failed"] += 1
+            else:
+                self._metrics["completed"] += 1
+                if task.duration():
+                    self._metrics["total_latency"] += task.duration()
 
         future = self._task_futures.get(task.id)
         if future and not future.done():

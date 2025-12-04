@@ -5,6 +5,7 @@ Provides remote discovery for Ollama LLM instances via Shodan integration.
 Remote-only architecture - no local network scanning.
 """
 
+import logging
 import threading
 import requests
 import json
@@ -12,9 +13,11 @@ import time
 import shodan
 import random
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datasets import Dataset
 from huggingface_hub import HfApi, create_repo
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteDiscovery:
@@ -34,6 +37,7 @@ class RemoteDiscovery:
         timeout: float = 5.0,
         shodan_api_key: Optional[str] = None,
         hf_token: Optional[str] = None,
+        use_ssl: bool = False,
     ):
         self.timeout = timeout
         self.discovered_instances = []
@@ -41,8 +45,9 @@ class RemoteDiscovery:
         self.shodan_client = shodan.Shodan(shodan_api_key) if shodan_api_key else None
         self.hf_token = hf_token
         self.hf_api = HfApi(token=hf_token) if hf_token else None
+        self.use_ssl = use_ssl
 
-    def _verify_ollama_instance(self, host: str, port: int) -> Dict[str, any]:
+    def _verify_ollama_instance(self, host: str, port: int, use_ssl: Optional[bool] = None) -> Dict[str, Any]:
         """Fast Ollama instance verification with response time measurement.
 
         Optimized verification process:
@@ -53,11 +58,13 @@ class RemoteDiscovery:
         Args:
             host: Target host address
             port: Target port number
+            use_ssl: Use HTTPS instead of HTTP (defaults to instance setting)
 
         Returns:
             Dictionary with verification results and performance metrics
         """
-        base_url = f"http://{host}:{port}"
+        protocol = "https" if (use_ssl if use_ssl is not None else self.use_ssl) else "http"
+        base_url = f"{protocol}://{host}:{port}"
         verification_data = {}
         start_time = time.time()
 
@@ -98,10 +105,17 @@ class RemoteDiscovery:
 
             return verification_data
 
+        except requests.Timeout:
+            logger.debug(f"Verification timeout for {host}:{port}")
+            return {}
+        except requests.RequestException as e:
+            logger.debug(f"Verification failed for {host}:{port}: {e}")
+            return {}
         except Exception as e:
+            logger.warning(f"Unexpected error verifying {host}:{port}: {e}")
             return {}
 
-    def search(self, query: str = "ollama", limit: int = 100) -> List[Dict[str, any]]:
+    def search(self, query: str = "ollama", limit: int = 100) -> List[Dict[str, Any]]:
         """Discover internet-facing Ollama instances via Shodan search.
 
         Uses conservative credit consumption with single targeted query.
@@ -121,7 +135,8 @@ class RemoteDiscovery:
             raise ValueError("Shodan API key required for global discovery")
 
         instances = []
-        search_query = query
+        # Search for Shodan-identified Ollama product (much more accurate than text search)
+        search_query = 'product:"ollama"' if query == "ollama" else query
         print(f"Searching Shodan: '{search_query}' (limit: {limit})")
 
         try:
@@ -152,13 +167,15 @@ class RemoteDiscovery:
                     instances.append(instance)
 
         except shodan.APIError as e:
+            logger.error(f"Shodan API error: {e}")
             print(f"Shodan API error: {e}")
         except Exception as e:
+            logger.error(f"Discovery error: {e}")
             print(f"Discovery error: {e}")
 
         return instances
 
-    def get_models(self, instance: Dict[str, any]) -> List[str]:
+    def get_models(self, instance: Dict[str, Any]) -> List[str]:
         """Retrieve available model list from discovered Ollama instance.
 
         Args:
@@ -172,13 +189,17 @@ class RemoteDiscovery:
             if response.status_code == 200:
                 data = response.json()
                 return [model["name"] for model in data.get("models", [])]
-        except Exception:
-            pass
+        except requests.Timeout:
+            logger.debug(f"Timeout getting models from {instance['url']}")
+        except requests.RequestException as e:
+            logger.debug(f"Request failed getting models from {instance['url']}: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error getting models from {instance['url']}: {e}")
         return []
 
     def backup_to_dataset(
         self,
-        instances: List[Dict[str, any]],
+        instances: List[Dict[str, Any]],
         dataset_name: str = "ollama-instances",
         repo_owner: str = "latterworks",
     ) -> bool:
@@ -223,11 +244,12 @@ class RemoteDiscovery:
             return True
 
         except Exception as e:
+            logger.error(f"Dataset backup error: {e}")
             print(f"Dataset backup error: {e}")
             return False
 
 
-class OllamaClient:
+class _OllamaClient:
     """High-level client for Ollama instance interaction and management.
 
     Provides streamlined interface for model operations, text generation,
@@ -236,16 +258,19 @@ class OllamaClient:
     Args:
         host: Target Ollama host address
         port: Target Ollama port (default: 11434)
+        use_ssl: Use HTTPS instead of HTTP (default: False)
     """
 
-    def __init__(self, host: str, port: int = 11434):
+    def __init__(self, host: str, port: int = 11434, use_ssl: bool = False):
         self.host = host
         self.port = port
-        self.base_url = f"http://{host}:{port}"
+        self.use_ssl = use_ssl
+        protocol = "https" if use_ssl else "http"
+        self.base_url = f"{protocol}://{host}:{port}"
         self.headers = {}
         self.httpx_kwargs = {}
 
-    def generate(self, model: str, prompt: str, stream: bool = False) -> Dict[str, any]:
+    def generate(self, model: str, prompt: str, stream: bool = False) -> Dict[str, Any]:
         """Execute text generation request using specified model.
 
         Args:
@@ -264,7 +289,14 @@ class OllamaClient:
                 timeout=30,
             )
             return response.json()
+        except requests.Timeout:
+            logger.warning(f"Timeout generating with model {model}")
+            return {"error": "Request timeout"}
+        except requests.RequestException as e:
+            logger.warning(f"Request failed for generate: {e}")
+            return {"error": str(e)}
         except Exception as e:
+            logger.error(f"Unexpected error in generate: {e}")
             return {"error": str(e)}
 
     def list_models(self) -> List[str]:
@@ -278,11 +310,15 @@ class OllamaClient:
             if response.status_code == 200:
                 data = response.json()
                 return [model["name"] for model in data.get("models", [])]
-        except Exception:
-            pass
+        except requests.Timeout:
+            logger.debug(f"Timeout listing models from {self.base_url}")
+        except requests.RequestException as e:
+            logger.debug(f"Request failed listing models: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error listing models: {e}")
         return []
 
-    def pull_model(self, model_name: str) -> Dict[str, any]:
+    def pull_model(self, model_name: str) -> Dict[str, Any]:
         """Download and install model on this Ollama instance.
 
         Args:
@@ -293,13 +329,20 @@ class OllamaClient:
         """
         try:
             response = requests.post(
-                f"{self.base_url}/api/pull", 
-                json={"name": model_name}, 
-                headers=self.headers, 
+                f"{self.base_url}/api/pull",
+                json={"name": model_name},
+                headers=self.headers,
                 timeout=300
             )
             return response.json()
+        except requests.Timeout:
+            logger.warning(f"Timeout pulling model {model_name}")
+            return {"error": "Request timeout"}
+        except requests.RequestException as e:
+            logger.warning(f"Request failed pulling model: {e}")
+            return {"error": str(e)}
         except Exception as e:
+            logger.error(f"Unexpected error pulling model: {e}")
             return {"error": str(e)}
 
 
@@ -311,12 +354,21 @@ class SemanticModelMatcher:
     Uses the latterworks/ollama-embeddings model for semantic similarity.
 
     Args:
-        embedding_endpoint: Local embedding model endpoint (LM Studio)
+        embedding_endpoint: Embedding model endpoint URL (default: LM Studio on localhost:1234)
+        embedding_model: Model name for embeddings (default: text-embedding-nomic-embed-text-v1.5)
         model_descriptions: Custom model descriptions for semantic matching
     """
 
-    def __init__(self, embedding_endpoint: str = "http://127.0.0.1:1234/v1/embeddings"):
-        self.embedding_endpoint = embedding_endpoint
+    DEFAULT_EMBEDDING_ENDPOINT = "http://127.0.0.1:1234/v1/embeddings"
+    DEFAULT_EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5"
+
+    def __init__(
+        self,
+        embedding_endpoint: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+    ):
+        self.embedding_endpoint = embedding_endpoint or self.DEFAULT_EMBEDDING_ENDPOINT
+        self.embedding_model = embedding_model or self.DEFAULT_EMBEDDING_MODEL
         self.model_cache = {}
         self.embedding_cache = {}
 
@@ -343,7 +395,7 @@ class SemanticModelMatcher:
             response = requests.post(
                 self.embedding_endpoint,
                 headers={"Content-Type": "application/json"},
-                json={"model": "text-embedding-nomic-embed-text-v1.5", "input": text.lower()},
+                json={"model": self.embedding_model, "input": text.lower()},
                 timeout=10,
             )
 
@@ -353,8 +405,12 @@ class SemanticModelMatcher:
                 self.embedding_cache[text] = embedding
                 return embedding
 
+        except requests.Timeout:
+            logger.debug(f"Embedding timeout for text: {text[:50]}...")
+        except requests.RequestException as e:
+            logger.debug(f"Embedding request failed: {e}")
         except Exception as e:
-            print(f"Embedding error for '{text}': {e}")
+            logger.warning(f"Embedding error for '{text[:50]}...': {e}")
 
         return None
 
@@ -409,7 +465,7 @@ class SemanticModelMatcher:
 
     def find_best_model(
         self, query: str, available_models: List[str], similarity_threshold: float = 0.3
-    ) -> Optional[Dict[str, any]]:
+    ) -> Optional[Dict[str, Any]]:
         """Find the best matching model for a natural language query.
 
         Args:
@@ -474,7 +530,7 @@ class SemanticModelMatcher:
 
         return best_match
 
-    def explain_model_choice(self, query: str, available_models: List[str]) -> Dict[str, any]:
+    def explain_model_choice(self, query: str, available_models: List[str]) -> Dict[str, Any]:
         """Provide detailed explanation of model matching process."""
         result = self.find_best_model(query, available_models)
 
@@ -514,11 +570,13 @@ class DistributedOllamaManager:
 
     def __init__(
         self,
-        instances: List[Dict[str, any]],
+        instances: List[Dict[str, Any]],
         strategy: str = "fastest",
         timeout: float = 30.0,
         enable_semantic_matching: bool = True,
         headers: Dict[str, str] = None,
+        embedding_endpoint: Optional[str] = None,
+        embedding_model: Optional[str] = None,
         **httpx_kwargs,
     ):
         self.instances = instances
@@ -531,13 +589,20 @@ class DistributedOllamaManager:
         self.failed_instances = set()
 
         # Initialize semantic model matcher
-        self.semantic_matcher = SemanticModelMatcher() if enable_semantic_matching else None
+        self.semantic_matcher = (
+            SemanticModelMatcher(
+                embedding_endpoint=embedding_endpoint,
+                embedding_model=embedding_model,
+            )
+            if enable_semantic_matching
+            else None
+        )
 
         # Initialize clients and stats for each instance
         for instance in instances:
             host, port = instance["host"], instance["port"]
             # Create client with custom headers and auth
-            client = OllamaClient(host, port)
+            client = _OllamaClient(host, port)
             client.headers = self.headers
             client.httpx_kwargs = self.httpx_kwargs
             self.clients[f"{host}:{port}"] = client
@@ -640,13 +705,17 @@ class DistributedOllamaManager:
             self.failed_instances.discard(instance_key)
             return True
 
-        except Exception:
-            pass
+        except requests.Timeout:
+            logger.debug(f"Health check timeout for {instance_key}")
+        except requests.RequestException as e:
+            logger.debug(f"Health check failed for {instance_key}: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error in health check for {instance_key}: {e}")
 
         self.failed_instances.add(instance_key)
         return False
 
-    def _resolve_model_name(self, model_query: str) -> Optional[Dict[str, any]]:
+    def _resolve_model_name(self, model_query: str) -> Optional[Dict[str, Any]]:
         """Resolve natural language model query to actual model name."""
         if not self.semantic_matcher:
             return {"model": model_query, "method": "exact"}
@@ -667,7 +736,7 @@ class DistributedOllamaManager:
 
     def generate_distributed(
         self, model_query: str, prompt: str, max_retries: int = 2, parallel_requests: int = 1
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """Execute distributed inference with automatic failover and semantic model matching.
 
         Args:
@@ -788,8 +857,8 @@ class DistributedOllamaManager:
             "failed_instances": list(self.failed_instances),
         }
 
-    def get_cluster_status(self) -> Dict[str, any]:
-        """Get comprehensive status of the distributed cluster."""
+    def get_flock_status(self) -> Dict[str, Any]:
+        """Get comprehensive status of the distributed flock."""
         total_instances = len(self.instances)
         healthy_instances = total_instances - len(self.failed_instances)
 
@@ -804,7 +873,7 @@ class DistributedOllamaManager:
                     model_distribution[model] = model_distribution.get(model, 0) + 1
 
         return {
-            "cluster_health": {
+            "flock_health": {
                 "total_instances": total_instances,
                 "healthy_instances": healthy_instances,
                 "failed_instances": len(self.failed_instances),
@@ -829,9 +898,10 @@ class DistributedOllamaManager:
             },
         }
 
+
 def discover_remote_instances(
     shodan_api_key: str, query: str = "ollama", limit: int = 100
-) -> List[Dict[str, any]]:
+) -> List[Dict[str, Any]]:
     """Discover Ollama instances globally via Shodan with comprehensive verification.
 
     Performs sequential verification on each discovered instance:
@@ -850,13 +920,22 @@ def discover_remote_instances(
     return discovery.search(query, limit)
 
 
-def connect_to_ollama(host: str, port: int = 11434) -> OllamaClient:
-    """Convenience function to create an Ollama client"""
-    return OllamaClient(host, port)
+def connect_to_ollama(host: str, port: int = 11434, use_ssl: bool = False) -> _OllamaClient:
+    """Convenience function to create an Ollama client.
+
+    Args:
+        host: Target host address
+        port: Target port (default: 11434)
+        use_ssl: Use HTTPS instead of HTTP (default: False)
+
+    Returns:
+        Configured _OllamaClient instance
+    """
+    return _OllamaClient(host, port, use_ssl)
 
 
 def create_distributed_manager(
-    instances: List[Dict[str, any]], strategy: str = "fastest"
+    instances: List[Dict[str, Any]], strategy: str = "fastest"
 ) -> DistributedOllamaManager:
     """Create a distributed Ollama manager for remote instances.
 

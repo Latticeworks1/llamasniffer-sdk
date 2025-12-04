@@ -14,7 +14,7 @@ __email__ = "dev@latticeworks1.com"
 from .core import (
     # Main classes
     RemoteDiscovery,
-    OllamaClient,
+    _OllamaClient as BaseOllamaClient,
     DistributedOllamaManager,
     SemanticModelMatcher,
     # Convenience functions
@@ -36,7 +36,7 @@ from .ollama import (
     configure,
     inspect_resolution,
     auto_discover_instances,
-    get_cluster_status,
+    get_flock_status,
     OllamaConfig,
 )
 
@@ -66,17 +66,10 @@ from .endpoint_cache import (
     clear_cache,
 )
 
-# Import quality control
-from .quality_control import (
-    EndpointQualityChecker,
-    validate_endpoint_quality,
-    filter_quality_endpoints,
-)
-
 __all__ = [
     # Core Classes
     "RemoteDiscovery",
-    "OllamaClient",
+    "BaseOllamaClient",
     "DistributedOllamaManager",
     "SemanticModelMatcher",
     # Core Functions
@@ -95,7 +88,7 @@ __all__ = [
     "configure",
     "inspect_resolution",
     "auto_discover_instances",
-    "get_cluster_status",
+    "get_flock_status",
     "OllamaConfig",
     # Distributed Task Queue
     "ParallelTaskQueue",

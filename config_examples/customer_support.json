@@ -1,0 +1,32 @@
+{
+  "name": "Customer Support Dialogues",
+  "description": "Realistic customer support conversations",
+  "dataset_type": "conversations",
+  "target_size": 2000,
+  "quality_level": "standard",
+  "models": [
+    "llama3",
+    "openchat"
+  ],
+  "batch_size": 25,
+  "require_consensus": false,
+  "deduplicate": true,
+  "output_format": "jsonl",
+  "generation_params": {
+    "scenarios": [
+      "technical_support",
+      "billing_inquiry",
+      "product_question",
+      "complaint_resolution"
+    ],
+    "conversation_length": [
+      3,
+      10
+    ],
+    "tone": [
+      "professional",
+      "friendly",
+      "patient"
+    ]
+  }
+}

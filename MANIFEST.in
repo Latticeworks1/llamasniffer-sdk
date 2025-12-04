@@ -2,7 +2,7 @@ include README.md
 include LICENSE
 include CHANGELOG.md
 include pyproject.toml
-recursive-include llamasniffer_sdk *.py
-recursive-include tests *.py
+recursive-include llamasniffer *.py
+
 global-exclude *.pyc
 global-exclude __pycache__

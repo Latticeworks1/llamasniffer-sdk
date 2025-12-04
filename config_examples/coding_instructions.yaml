@@ -1,0 +1,29 @@
+batch_size: 50
+consensus_threshold: 0.9
+dataset_type: instructions
+deduplicate: true
+description: Programming instruction dataset for code generation
+generation_params:
+  complexity:
+  - simple
+  - moderate
+  - complex
+  domains:
+  - web_dev
+  - data_science
+  - algorithms
+  - system_programming
+  languages:
+  - python
+  - javascript
+  - rust
+  - go
+models:
+- codellama
+- deepseek-r1
+name: Coding Instructions
+output_format: json
+quality_level: premium
+require_consensus: true
+target_size: 5000
+validation_model: deepseek-r1

@@ -1,0 +1,38 @@
+# Quick Demo Dataset Configuration
+# Small dataset for testing and demonstration
+
+name: "Quick Demo Dataset"
+description: "Small Q&A dataset for testing the generation pipeline"
+
+# Dataset specification
+dataset_type: "qa_pairs"
+target_size: 50
+quality_level: "standard"
+
+# Model configuration
+models:
+  - "llama3"
+  - "openchat"
+
+# Generation parameters
+batch_size: 10
+max_retries: 2
+require_consensus: false
+deduplicate: true
+
+# Output configuration  
+output_format: "json"
+
+# Simple generation parameters
+generation_params:
+  temperature: 0.7
+  max_tokens: 512
+  
+  topics:
+    - "general_knowledge"
+    - "technology"
+    - "science"
+  
+  difficulty_levels:
+    - "beginner"
+    - "intermediate"

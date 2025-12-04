@@ -1,138 +1,72 @@
-#!/usr/bin/env python3
-"""
-Test script for distributed Ollama inference capabilities.
-"""
-
-import sys
-import os
-import json
-import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import pytest
 
 import llamasniffer
+from llamasniffer.core import DistributedOllamaManager
 
 
-def test_basic_discovery():
-    """Test basic local discovery functionality."""
-    print("=== Testing Local Discovery ===")
-    instances = llamasniffer.discover_ollama_instances()
-    print(f"Found {len(instances)} local instances")
+class StubOllamaClient:
+    """Minimal OllamaClient replacement for tests."""
 
-    if instances:
-        print("\nInstance details:")
-        for i, instance in enumerate(instances):
-            print(
-                f"  {i + 1}. {instance['host']}:{instance['port']} - {len(instance.get('models', []))} models"
-            )
-            print(f"     Response time: {instance.get('version_response_time_ms', 'unknown')}ms")
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self._models = ["demo-model"]
 
-    return instances
+    def list_models(self):
+        return self._models
+
+    def generate(self, model, prompt, stream=False):
+        return {"response": f"{model}:{prompt}", "instance": f"{self.host}:{self.port}"}
 
 
-def test_distributed_manager(instances):
-    """Test distributed manager functionality."""
-    if not instances:
-        print("No instances available for distributed testing")
-        return
+class StubDiscovery:
+    def __init__(self, shodan_api_key: str, **_):
+        self.key = shodan_api_key
 
-    print("\n=== Testing Distributed Manager ===")
+    def search(self, query, limit):
+        return [
+            {
+                "host": "1.2.3.4",
+                "port": 11434,
+                "response_time_ms": 50,
+                "models": ["demo-model"],
+                "discovery_method": "stub",
+            }
+        ]
 
-    # Create manager with fastest strategy
-    manager = llamasniffer.create_distributed_manager(instances=instances, strategy="fastest")
 
-    # Get cluster status
-    status = manager.get_cluster_status()
-    print(f"\nCluster Status:")
-    print(f"  Health: {status['cluster_health']['health_percentage']}%")
-    print(
-        f"  Instances: {status['cluster_health']['healthy_instances']}/{status['cluster_health']['total_instances']}"
+@pytest.fixture(autouse=True)
+def patch_ollama_client(monkeypatch):
+    monkeypatch.setattr("llamasniffer.core.OllamaClient", StubOllamaClient)
+
+
+def test_discover_remote_instances_uses_remote_discovery(monkeypatch):
+    monkeypatch.setattr("llamasniffer.core.RemoteDiscovery", StubDiscovery)
+    results = llamasniffer.discover_remote_instances("fake-key", query="ollama", limit=1)
+
+    assert len(results) == 1
+    assert results[0]["host"] == "1.2.3.4"
+
+
+def test_create_distributed_manager_requires_instances():
+    with pytest.raises(ValueError):
+        llamasniffer.create_distributed_manager(instances=[], strategy="fastest")
+
+
+def test_generate_distributed_returns_augmented_result():
+    instances = [
+        {"host": "localhost", "port": 11434, "models": ["demo-model"], "verified": True},
+        {"host": "remote", "port": 11435, "models": ["demo-model"], "verified": True},
+    ]
+
+    manager = DistributedOllamaManager(
+        instances=instances,
+        strategy="fastest",
+        enable_semantic_matching=False,
     )
-    print(f"  Available models: {status['model_availability']['unique_models']}")
-    print(f"  Models: {status['model_availability']['models'][:3]}...")  # Show first 3 models
 
-    # Test inference if models available
-    available_models = status["model_availability"]["models"]
-    if available_models:
-        test_model = available_models[0]
-        print(f"\n=== Testing Inference with {test_model} ===")
+    response = manager.generate_distributed("demo-model", "hello world", max_retries=0)
 
-        # Single inference
-        response = manager.generate_distributed(
-            test_model, "What is 2 + 2? Answer briefly.", max_retries=1
-        )
-
-        if "error" not in response:
-            print("✓ Single inference successful")
-            print(f"  Instance: {response['execution_metadata']['instance']}")
-            print(f"  Response time: {response['execution_metadata']['response_time_ms']}ms")
-            print(f"  Response: {response.get('response', 'No response')[:100]}...")
-        else:
-            print(f"✗ Single inference failed: {response['error']}")
-
-        # Parallel inference if multiple instances
-        if len(instances) > 1:
-            print("\n=== Testing Parallel Inference ===")
-            parallel_response = manager.generate_distributed(
-                test_model,
-                "What is the capital of Japan? Answer briefly.",
-                parallel_requests=min(2, len(instances)),
-            )
-
-            if "error" not in parallel_response:
-                print(f"✓ Parallel inference successful")
-                print(f"  Best instance: {parallel_response['execution_metadata']['instance']}")
-                print(f"  Parallel results: {len(parallel_response.get('parallel_results', []))}")
-            else:
-                print(f"✗ Parallel inference failed: {parallel_response['error']}")
-    else:
-        print("No models available for inference testing")
-
-
-def test_load_balancing_strategies(instances):
-    """Test different load balancing strategies."""
-    if len(instances) < 2:
-        print("Need at least 2 instances to test load balancing")
-        return
-
-    print("\n=== Testing Load Balancing Strategies ===")
-
-    strategies = ["fastest", "round_robin", "least_loaded"]
-
-    for strategy in strategies:
-        print(f"\nTesting {strategy} strategy:")
-        manager = llamasniffer.create_distributed_manager(instances=instances, strategy=strategy)
-
-        # Get first available model
-        status = manager.get_cluster_status()
-        if status["model_availability"]["models"]:
-            model = status["model_availability"]["models"][0]
-
-            # Run 3 quick inferences to see distribution
-            for i in range(3):
-                response = manager.generate_distributed(
-                    model, f"Test query {i + 1} for {strategy}", max_retries=0
-                )
-                if "error" not in response:
-                    instance = response["execution_metadata"]["instance"]
-                    response_time = response["execution_metadata"]["response_time_ms"]
-                    print(f"  Query {i + 1}: {instance} ({response_time}ms)")
-
-
-if __name__ == "__main__":
-    print("LlamaSniffer - Distributed Inference Test")
-    print("=" * 50)
-
-    # Test discovery
-    instances = test_basic_discovery()
-
-    # Test distributed functionality
-    if instances:
-        test_distributed_manager(instances)
-        test_load_balancing_strategies(instances)
-    else:
-        print("\nNo instances found. Make sure Ollama is running on your network.")
-        print("You can also test with Shodan discovery if you have an API key.")
-
-    print("\n" + "=" * 50)
-    print("Test completed")
+    assert "error" not in response
+    assert response["response"] == "demo-model:hello world"
+    assert response["execution_metadata"]["instance"] in {"localhost:11434", "remote:11435"}

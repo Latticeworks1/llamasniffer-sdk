@@ -1,0 +1,98 @@
+# Structured Reasoning Dataset Configuration
+# 100 rows with separate columns for problem, reasoning steps, and answer
+
+name: "Structured Reasoning Dataset"
+description: "Mathematical reasoning with clearly separated problem, steps, and answer columns"
+
+# Use built-in reasoning template with structured output
+dataset_type: "reasoning"
+target_size: 100
+quality_level: "high"
+
+# Model configuration
+models:
+  - "deepseek-r1"
+  - "llama3"
+
+validation_model: "deepseek-r1"
+
+# Generation parameters
+batch_size: 20
+max_retries: 2
+require_consensus: false
+deduplicate: true
+
+# Output format
+output_format: "json"
+
+# Schema definition - this compiles the natural language spec into structure
+schema:
+  problem:
+    type: "text"
+    description: "A clear mathematical or logical problem that requires reasoning"
+    required: true
+    validation:
+      min_length: 15
+      max_length: 300
+    examples:
+      - "What is 15% of 240?"
+      - "If a train travels 120 miles in 2 hours, what is its average speed?"
+      - "Solve for x: 3x - 7 = 2x + 5"
+    prompt: "Generate a clear, well-defined mathematical problem that requires step-by-step reasoning to solve. Make it challenging but solvable."
+
+  reasoning_steps:
+    type: "list"
+    description: "Step-by-step reasoning process leading to the solution"
+    required: true
+    validation:
+      min_length: 2
+      max_length: 8
+    examples:
+      - ["Step 1: Convert percentage to decimal", "Step 2: Multiply 240 × 0.15", "Step 3: Calculate final result"]
+    prompt: "Provide clear, logical steps that solve the problem. Each step should build on previous ones and be easy to follow."
+
+  answer:
+    type: "text"
+    description: "The final correct answer"
+    required: true
+    validation:
+      min_length: 1
+      max_length: 100
+    examples:
+      - "36"
+      - "60 miles per hour"
+      - "x = 12"
+    prompt: "Provide the final, correct answer based on the reasoning steps. Be precise and include units if applicable."
+
+# Generation context
+generation_params:
+  temperature: 0.4
+  max_tokens: 1500
+  
+  # Problem domains
+  domains:
+    - "basic_arithmetic"
+    - "algebra"
+    - "geometry"
+    - "word_problems"
+    - "percentages"
+    - "ratios_and_proportions"
+  
+  # Difficulty levels
+  difficulty_levels:
+    - "middle_school"
+    - "high_school"
+  
+  # Problem types
+  problem_types:
+    - "calculation"
+    - "equation_solving"
+    - "word_problem"
+    - "logical_reasoning"
+
+# Global constraints
+global_constraints:
+  ensure_solvable: true
+  verify_answer: true
+  require_numerical_answer: false
+  include_units: true

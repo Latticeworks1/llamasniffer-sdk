@@ -22,6 +22,10 @@ from typing import Dict, List, Any, Union
 from .core import DistributedOllamaManager, SemanticModelMatcher, discover_remote_instances
 
 
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
 class OllamaConfig:
     """Unified configuration management for distributed Ollama client."""
 
@@ -115,6 +119,23 @@ class OllamaConfig:
                 except IOError:
                     continue
         
+        # Don't prompt in non-interactive environments (tests, scripts, CI)
+        import sys
+        if not sys.stdin.isatty():
+            return None
+
+        # If key is not found and we're in an interactive terminal, prompt the user
+        try:
+            key = input("Shodan API key not found. Please enter your key to enable global discovery: ").strip()
+            if len(key) > 10:
+                # Save the key for future use
+                self._config["shodan"]["api_key"] = key
+                self.save()
+                return key
+        except (EOFError, KeyboardInterrupt):
+            # Handle cases where input is interrupted
+            pass
+
         return None
 
     def _find_huggingface_token(self) -> str:
@@ -253,6 +274,10 @@ class OllamaConfig:
         self._config["shodan"]["api_key"] = api_key
 
 
+# ============================================================================
+# CLIENT
+# ============================================================================
+
 class OllamaClient:
     """Ollama client with distributed inference and semantic matching."""
 
@@ -315,7 +340,7 @@ class OllamaClient:
 
         if not resolution and self.config.fallback_to_first:
             # Fallback to first available model
-            status = manager.get_cluster_status()
+            status = manager.get_flock_status()
             available = status["model_availability"]["models"]
             if available:
                 resolution = {"model": available[0], "method": "fallback", "confidence": 0.0}
@@ -536,7 +561,7 @@ class OllamaClient:
     def list(self) -> Dict[str, List[Dict]]:
         """List all available models across instances."""
         manager = self._get_manager()
-        status = manager.get_cluster_status()
+        status = manager.get_flock_status()
 
         models = []
         for model_name in status["model_availability"]["models"]:
@@ -557,7 +582,7 @@ class OllamaClient:
         """Show model information with semantic resolution details."""
         resolution = self._resolve_model(model)
         manager = self._get_manager()
-        status = manager.get_cluster_status()
+        status = manager.get_flock_status()
 
         if resolution and resolution["model"] in status["model_availability"]["models"]:
             return {
@@ -581,9 +606,9 @@ class OllamaClient:
             raise ValueError(f"Model not found: {model}")
 
     def ps(self) -> Dict[str, List[Dict]]:
-        """Show running models (cluster status)."""
+        """Show running models (flock status)."""
         manager = self._get_manager()
-        status = manager.get_cluster_status()
+        status = manager.get_flock_status()
 
         models = []
         for model_name in status["model_availability"]["models"]:
@@ -597,7 +622,7 @@ class OllamaClient:
                 }
             )
 
-        return {"models": models, "cluster_status": status}
+        return {"models": models, "flock_status": status}
 
     def embed(self, model: str, input: Union[str, List[str]], **kwargs) -> Dict[str, Any]:
         """Generate embeddings for text input."""
@@ -823,6 +848,10 @@ class OllamaClient:
         }
 
 
+# ============================================================================
+# PUBLIC API
+# ============================================================================
+
 # Global client instance and configuration
 _config = OllamaConfig()
 _client = OllamaClient(_config)
@@ -1017,71 +1046,10 @@ def auto_discover_instances(limit: int = 10, use_cache: bool = True, ttl_hours: 
         return []
 
 
-def get_cluster_status() -> Dict[str, Any]:
-    """Get distributed cluster status."""
-    manager = _client._get_manager()
-    return manager.get_cluster_status()
-
-
 def get_flock_status() -> Dict[str, Any]:
     """Get distributed flock status and intelligence."""
     manager = _client._get_manager()
-    status = manager.get_cluster_status()
-    
-    # Transform cluster terminology to flock terminology
-    flock_status = {
-        "flock_health": status["cluster_health"],
-        "model_availability": status["model_availability"],
-        "performance_stats": status["performance_stats"]
-    }
-    
-    return flock_status
-
-
-def get_cached_endpoints() -> Dict[str, Any]:
-    """Get detailed info about all cached/discovered endpoints."""
-    manager = _client._get_manager()
-    
-    endpoint_details = []
-    for instance in manager.instances:
-        endpoint_info = {
-            "host": instance["host"],
-            "port": instance["port"],
-            "url": f"http://{instance['host']}:{instance['port']}",
-            "verified": instance.get("verified", False),
-            "models": instance.get("models", []),
-            "discovery_method": instance.get("discovery_method", "unknown"),
-            "discovered_at": instance.get("discovered_at", 0),
-            "response_time_ms": instance.get("response_time_ms", 0),
-            "version": instance.get("version", "unknown"),
-            "last_updated": instance.get("last_health_check", 0),
-        }
-        
-        # Add performance stats if available
-        instance_key = f"{instance['host']}:{instance['port']}"
-        if instance_key in manager.instance_stats:
-            stats = manager.instance_stats[instance_key]
-            endpoint_info.update({
-                "total_requests": stats["total_requests"],
-                "successful_requests": stats["successful_requests"],
-                "success_rate": round((stats["successful_requests"] / max(stats["total_requests"], 1)) * 100, 1),
-                "avg_response_time": round(stats["average_response_time"], 2),
-                "current_load": stats["current_load"],
-                "is_healthy": instance_key not in manager.failed_instances,
-            })
-        
-        endpoint_details.append(endpoint_info)
-    
-    return {
-        "total_endpoints": len(endpoint_details),
-        "healthy_endpoints": len([e for e in endpoint_details if e.get("is_healthy", True)]),
-        "failed_endpoints": len(manager.failed_instances),
-        "discovery_summary": {
-            method: len([e for e in endpoint_details if e["discovery_method"] == method])
-            for method in set(e["discovery_method"] for e in endpoint_details)
-        },
-        "endpoints": endpoint_details,
-    }
+    return manager.get_flock_status()
 
 
 def get_flock_nodes() -> Dict[str, Any]:
@@ -1130,6 +1098,11 @@ def get_flock_nodes() -> Dict[str, Any]:
     }
 
 
+def get_cached_endpoints() -> Dict[str, Any]:
+    """Alias for get_flock_nodes() for backward compatibility."""
+    return get_flock_nodes()
+
+
 def refresh_endpoint_health() -> Dict[str, Any]:
     """Force refresh health check on all cached endpoints."""
     manager = _client._get_manager()
@@ -1148,7 +1121,7 @@ def refresh_endpoint_health() -> Dict[str, Any]:
     return {
         "refreshed_endpoints": refreshed,
         "errors": errors,
-        "current_status": get_cluster_status(),
+        "current_status": get_flock_status(),
     }
 
 
@@ -1579,8 +1552,7 @@ class OllamaModule:
         self.backup_flock_data = backup_flock_data
         self.backup_flock_nodes = backup_flock_nodes
         self.backup_flock_health = backup_flock_health
-        # Backward compatibility aliases
-        self.get_cluster_status = get_cluster_status
+        # Additional exports
         self.get_cached_endpoints = get_cached_endpoints
         self.refresh_endpoint_health = refresh_endpoint_health
         self.Client = OllamaClient

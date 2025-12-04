@@ -1,0 +1,75 @@
+# Mathematical Reasoning Dataset Configuration
+# Step-by-step mathematical problem solving for reasoning training
+
+name: "Mathematical Reasoning Dataset"
+description: "Complex mathematical problems with detailed step-by-step solutions"
+
+# Dataset specification
+dataset_type: "reasoning"
+target_size: 3000
+quality_level: "high"
+
+# Model configuration - reasoning specialists
+models:
+  - "deepseek-r1"
+  - "llama3"
+
+validation_model: "deepseek-r1"
+
+# Generation parameters
+batch_size: 30
+max_retries: 3
+require_consensus: true
+consensus_threshold: 0.85
+deduplicate: true
+
+# Output configuration
+output_format: "json"
+
+# Mathematical reasoning parameters
+generation_params:
+  temperature: 0.4  # Balanced for mathematical accuracy
+  max_tokens: 3072
+  
+  # Mathematical domains
+  domains:
+    - "algebra"
+    - "geometry" 
+    - "calculus"
+    - "statistics"
+    - "probability"
+    - "number_theory"
+    - "linear_algebra"
+    - "discrete_mathematics"
+  
+  # Problem difficulty
+  difficulty_levels:
+    - "high_school"
+    - "undergraduate"
+    - "graduate"
+    - "competition"
+  
+  # Problem types
+  problem_types:
+    - "word_problems"
+    - "proof_problems"
+    - "optimization"
+    - "equation_solving"
+    - "graph_theory"
+    - "combinatorics"
+  
+  # Solution requirements
+  solution_structure:
+    include_problem_analysis: true
+    show_step_by_step: true
+    include_alternative_methods: false
+    verify_solution: true
+    explain_reasoning: true
+    
+  # Quality constraints
+  constraints:
+    min_steps: 3
+    max_steps: 15
+    require_final_answer: true
+    include_units: true
+    check_reasonableness: true

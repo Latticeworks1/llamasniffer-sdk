@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "llamasniffer"
-version = "0.2.0"
-description = "SDK for discovering and interacting with Ollama instances with distributed inference and semantic model matching"
+version = "0.4.0"
+description = "Distributed Semantic Routing for Ollama — Global Model Discovery and Inference Coordination"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
     {name = "Latticeworks1", email = "dev@latticeworks1.com"},
 ]
-keywords = ["ollama", "llm", "ai", "distributed-inference", "model-discovery", "semantic-matching"]
+keywords = ["ollama", "llm", "ai", "distributed-inference", "semantic-routing", "inference-mesh", "distributed-ai", "global-discovery", "flock-intelligence"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

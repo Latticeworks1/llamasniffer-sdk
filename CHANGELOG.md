@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2024-10-10
+
+### Added
+- **Flock Intelligence Rebranding**: Transformed from cluster/endpoint terminology to sophisticated "flock" concepts
+  - `get_flock_status()`: Monitor the distributed flock's health and intelligence  
+  - `get_flock_nodes()`: Detailed view of all nodes participating in the flock
+  - `refresh_flock_health()`: Force health checks across the autonomous flock
+- **Philosophical Positioning**: Elevated from discovery tool to "Distributed Semantic Routing for Ollama"
+  - Autonomous inference mesh where every node contributes to collective intelligence
+  - The flock operates as a distributed organism — aware, adaptive, and constantly optimizing
+  - Global model discovery and inference coordination across geographic boundaries
+
+### Changed
+- **Brand Evolution**: Sophisticated messaging around distributed intelligence and autonomous systems
+- **Documentation Rewrite**: Complete README transformation with philosophical approach
+- **Terminology**: "Cluster" → "Flock", "Endpoints" → "Nodes", enhanced with intelligence concepts
+- **Backward Compatibility**: All existing methods preserved as aliases (`get_cluster_status()`, `get_cached_endpoints()`)
+
 ## [0.3.0] - 2024-10-10
 
 ### Added

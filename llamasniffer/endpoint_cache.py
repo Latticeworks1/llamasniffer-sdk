@@ -18,6 +18,7 @@ class EndpointCache:
 
     Features:
     - Stores endpoints in JSON file
+    - In-memory cache for fast repeated access
     - Automatic expiry after configurable TTL
     - Health-based filtering (removes dead endpoints)
     - Periodic refresh tracking
@@ -26,17 +27,25 @@ class EndpointCache:
     def __init__(self,
                  cache_path: Optional[str] = None,
                  ttl_hours: int = 24,
-                 min_health_threshold: float = 0.7):
+                 min_health_threshold: float = 0.7,
+                 memory_cache_ttl: int = 300):
         """Initialize endpoint cache.
 
         Args:
             cache_path: Path to cache file (default: ~/.llamasniffer/endpoint_cache.json)
             ttl_hours: Time-to-live in hours before re-scan needed
             min_health_threshold: Minimum health score to keep endpoint (0.0-1.0)
+            memory_cache_ttl: In-memory cache TTL in seconds (default: 5 minutes)
         """
         self.cache_path = cache_path or self._default_cache_path()
         self.ttl_hours = ttl_hours
         self.min_health_threshold = min_health_threshold
+        self.memory_cache_ttl = memory_cache_ttl
+
+        # In-memory cache
+        self._memory_cache: Optional[Dict] = None
+        self._memory_cache_loaded_at: float = 0
+
         self._ensure_cache_dir()
 
     def _default_cache_path(self) -> str:
@@ -49,12 +58,26 @@ class EndpointCache:
         cache_dir = Path(self.cache_path).parent
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def load(self) -> Optional[Dict]:
-        """Load cached endpoints from disk.
+    def _is_memory_cache_valid(self) -> bool:
+        """Check if in-memory cache is still valid."""
+        if self._memory_cache is None:
+            return False
+        age = time.time() - self._memory_cache_loaded_at
+        return age < self.memory_cache_ttl
+
+    def load(self, use_memory_cache: bool = True) -> Optional[Dict]:
+        """Load cached endpoints from disk or memory.
+
+        Args:
+            use_memory_cache: Use in-memory cache if available (default: True)
 
         Returns:
             Cache data dict or None if cache doesn't exist/is invalid
         """
+        # Check in-memory cache first
+        if use_memory_cache and self._is_memory_cache_valid():
+            return self._memory_cache
+
         if not os.path.exists(self.cache_path):
             return None
 
@@ -66,12 +89,16 @@ class EndpointCache:
             if not isinstance(cache_data, dict) or 'endpoints' not in cache_data:
                 return None
 
+            # Update in-memory cache
+            self._memory_cache = cache_data
+            self._memory_cache_loaded_at = time.time()
+
             return cache_data
         except (json.JSONDecodeError, IOError):
             return None
 
     def save(self, endpoints: List[Dict], metadata: Optional[Dict] = None):
-        """Save endpoints to cache.
+        """Save endpoints to cache (both disk and memory).
 
         Args:
             endpoints: List of discovered endpoint dicts
@@ -88,6 +115,10 @@ class EndpointCache:
 
         with open(self.cache_path, 'w') as f:
             json.dump(cache_data, f, indent=2)
+
+        # Update in-memory cache
+        self._memory_cache = cache_data
+        self._memory_cache_loaded_at = time.time()
 
     def is_valid(self, cache_data: Optional[Dict] = None) -> bool:
         """Check if cache is still valid (not expired).
@@ -252,9 +283,13 @@ class EndpointCache:
         }
 
     def clear(self):
-        """Clear the cache by deleting the cache file."""
+        """Clear the cache (both disk and memory)."""
         if os.path.exists(self.cache_path):
             os.remove(self.cache_path)
+
+        # Clear in-memory cache
+        self._memory_cache = None
+        self._memory_cache_loaded_at = 0
 
 
 # Convenience functions

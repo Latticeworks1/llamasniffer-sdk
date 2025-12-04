@@ -1,0 +1,52 @@
+# Reasoning Dataset Demo Configuration
+# 100 rows of reasoning data with prompt, steps, and answer
+
+name: "Reasoning Demo Dataset"
+description: "Mathematical and logical reasoning with step-by-step solutions"
+
+# Dataset specification
+dataset_type: "reasoning"
+target_size: 100
+quality_level: "high"
+
+# Model configuration - use reasoning specialists
+models:
+  - "deepseek-r1"
+  - "llama3"
+
+validation_model: "deepseek-r1"
+
+# Generation parameters
+batch_size: 20
+max_retries: 3
+require_consensus: false  # For demo speed
+deduplicate: true
+
+# Output configuration
+output_format: "json"
+
+# Reasoning generation parameters
+generation_params:
+  temperature: 0.4
+  max_tokens: 2048
+  
+  # Problem domains
+  domains:
+    - "basic_math"
+    - "algebra" 
+    - "logic_puzzles"
+    - "word_problems"
+    - "geometry"
+  
+  # Problem difficulty
+  difficulty_levels:
+    - "intermediate"
+    - "advanced"
+  
+  # Output structure requirements
+  structure:
+    include_problem: true
+    include_reasoning_steps: true
+    include_final_answer: true
+    step_by_step: true
+    verify_answer: true

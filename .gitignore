@@ -73,6 +73,18 @@ api_key.txt
 .env.*
 secrets.txt
 
+# Hugging Face credentials
+.huggingface/
+hf_token.txt
+huggingface_token.txt
+hf_config.json
+huggingface_config.json
+
+# LlamaSniffer credentials
+llamasniffer_config.json
+flock_config.json
+shodan_key.txt
+
 # Logs
 *.log
 logs/
